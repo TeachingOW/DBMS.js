@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser DBMS Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">DB</div>
+        <div>
+          <h1>Browser DBMS Lab</h1>
+          <p>Load CSVs, write Relational Algebra, watch the plan execute.</p>
+        </div>
+      </div>
+      <div class="status" id="status">Idle</div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Tables</h2>
+        <div class="uploader">
+          <label class="button">
+            Upload CSVs
+            <input id="fileInput" type="file" accept=".csv" multiple />
+          </label>
+          <button id="loadSample" class="button ghost">Load sample data</button>
+        </div>
+        <div id="tablesList" class="tables"></div>
+        <div class="hint">
+          Each CSV becomes a table. Headers become column names. Qualified names like <code>users.age</code> work in joins.
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Query</h2>
+        <div class="hint" style="margin-bottom: 0.5em;">
+          <strong>Examples:</strong><br>
+          <span>RA: <code>project[id,name](select[age >= 30](users))</code></span><br>
+          <span>Join: <code>project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))</code></span><br>
+          <span>SQL (optional): <code>SELECT id, name FROM users WHERE age >= 30 LIMIT 10</code></span>
+        </div>
+        <textarea id="queryInput" spellcheck="false" placeholder="Enter your query here..."></textarea>
+        <div class="controls">
+          <button id="buildPlan" class="button">Build plan</button>
+          <button id="resetExec" class="button ghost">Reset</button>
+          <button id="stepExec" class="button">Step</button>
+          <button id="runExec" class="button">Run</button>
+          <label class="inline">
+            Batch
+            <input id="batchSize" type="number" min="1" max="500" value="50" />
+          </label>
+        </div>
+        <div id="errorBox" class="error hidden"></div>
+      </section>
+
+      <section class="panel plan">
+        <h2>Query plan</h2>
+        <div id="planTree" class="tree"></div>
+      </section>
+
+      <section class="panel results">
+        <h2>Execution</h2>
+        <div class="split">
+          <div>
+            <h3>Active batch</h3>
+            <div id="activeBatch" class="table"></div>
+          </div>
+          <div>
+            <h3>Intermediate previews</h3>
+            <div id="previews" class="previews"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      No backend. Everything stays in your browser.
+    </footer>
+
+    <script>
+// --- parser.js ---
+const greekMap = { 'σ': 'select', 'π': 'project', 'τ': 'limit' };
+function isWhitespace(char) { return /\s/.test(char); }
+function isIdentStart(char) { return /[A-Za-z_]/.test(char); }
+function isIdentPart(char) { return /[A-Za-z0-9_\.]/.test(char); }
+function parseQuery(input) {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error('Empty query.');
+  if (/^select\s+/i.test(trimmed)) {
+    const ast = parseSQLToRA(trimmed);
+    if (!ast) throw new Error('Could not parse SQL. Expected SELECT ... FROM ...');
+    return ast;
+  }
+  return parseRA(trimmed);
+}
+// ...existing code from parser.js (functions: parseRA, parseSQLToRA, tokenizeCondition, parseCondition)...
+// (Omitted here for brevity, will be included in the actual patch)
+
+// --- worker.js as a string for Blob ---
+const workerScript = `
+// parser.js code
+${parseQuery.toString()}
+// ...existing code from parser.js (functions: parseRA, parseSQLToRA, tokenizeCondition, parseCondition)...
+${/* All worker.js code, replacing import with inlined parser.js code */''}
+// ...existing code from worker.js...
+`;
+
+// --- main.js ---
+const worker = new Worker(URL.createObjectURL(new Blob([workerScript], { type: 'application/javascript' })));
+// ...existing code from main.js, replacing import and Worker instantiation...
+// (Omitted here for brevity, will be included in the actual patch)
+    </script>
+  </body>
+</html>
