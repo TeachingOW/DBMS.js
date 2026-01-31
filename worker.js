@@ -80,6 +80,14 @@ function buildPlan(ast) {
         children: [walk(node.left), walk(node.right)]
       };
     }
+    if (node.type === 'union') {
+      return {
+        id,
+        op: 'union',
+        detail: '',
+        children: [walk(node.left), walk(node.right)]
+      };
+    }
     if (node.type === 'cross') {
       return {
         id,
@@ -125,6 +133,9 @@ function buildExecutor(ast, tableData, labels) {
     if (node.type === 'join') {
       return new JoinOp(node, build(node.left), build(node.right), labels);
     }
+    if (node.type === 'union') {
+      return new UnionOp(node, build(node.left), build(node.right), labels);
+    }
     if (node.type === 'cross') {
       return new CrossOp(node, build(node.left), build(node.right), labels);
     }
@@ -143,6 +154,7 @@ class ScanOp {
     this.rows = tableData[node.table]?.rows || [];
     this.index = 0;
     this.labels = labels;
+    this.opType = 'scan';
     this.doneNotified = false;
   }
 
@@ -190,35 +202,29 @@ class SelectOp {
     this.child = child;
     this.predicate = node.predicate;
     this.labels = labels;
+    this.opType = 'select';
   }
 
   nextBatch(batchSize, trace) {
     trace.push(this.id);
-    const rows = [];
-    const evaluated = [];
-    let done = false;
-    while (rows.length < batchSize && !done) {
-      const result = this.child.nextBatch(batchSize, trace);
-      done = result.done;
-      for (const row of result.rows) {
-        const passed = evaluatePredicate(this.predicate, row);
-        evaluated.push({ row, passed });
-        if (passed) {
-          rows.push(row);
-          if (rows.length >= batchSize) break;
-        }
+    const result = this.child.nextBatch(1, trace);
+    if (result.rows.length === 0) {
+      updatePreview(this.labels, this.id, []);
+      if (previewState[this.id]) {
+        previewState[this.id].op = 'select';
+        previewState[this.id].last = null;
       }
-      if (result.rows.length === 0 && done) {
-        break;
-      }
+      return { rows: [], done: result.done };
     }
+    const row = result.rows[0];
+    const passed = evaluatePredicate(this.predicate, row);
+    const rows = passed ? [row] : [];
     updatePreview(this.labels, this.id, rows);
     if (previewState[this.id]) {
-      const lastEntry = evaluated.length > 0 ? evaluated[evaluated.length - 1] : null;
       previewState[this.id].op = 'select';
-      previewState[this.id].last = lastEntry;
+      previewState[this.id].last = { row, passed };
     }
-    return { rows, done };
+    return { rows, done: result.done };
   }
 
   getScanInfos() {
@@ -232,6 +238,7 @@ class ProjectOp {
     this.child = child;
     this.columns = node.columns;
     this.labels = labels;
+    this.opType = 'project';
   }
 
   nextBatch(batchSize, trace) {
@@ -266,6 +273,7 @@ class LimitOp {
     this.child = child;
     this.remaining = node.count;
     this.labels = labels;
+    this.opType = 'limit';
   }
 
   nextBatch(batchSize, trace) {
@@ -293,6 +301,7 @@ class JoinOp {
     this.right = right;
     this.predicate = node.predicate;
     this.labels = labels;
+    this.opType = 'join';
     this.rightLoaded = false;
     this.rightRows = [];
     this.leftBatch = [];
@@ -370,12 +379,95 @@ class JoinOp {
   }
 }
 
+class UnionOp {
+  constructor(node, left, right, labels) {
+    this.id = node.id;
+    this.left = left;
+    this.right = right;
+    this.labels = labels;
+    this.opType = 'union';
+    this.seen = new Set();
+    this.leftDone = false;
+    this.rightDone = false;
+    this.columns = null;
+  }
+
+  nextBatch(batchSize, trace) {
+    trace.push(this.id);
+    const output = [];
+
+    while (output.length < batchSize) {
+      if (!this.leftDone) {
+        const result = this.left.nextBatch(batchSize, trace);
+        this.leftDone = result.done;
+        for (const row of result.rows) {
+          const normalized = this.normalizeRow(row);
+          const key = this.getRowKey(normalized);
+          if (!this.seen.has(key)) {
+            this.seen.add(key);
+            output.push(normalized);
+            if (output.length >= batchSize) break;
+          }
+        }
+        if (output.length >= batchSize) break;
+        if (!this.leftDone) {
+          continue;
+        }
+      }
+
+      const result = this.right.nextBatch(batchSize, trace);
+      this.rightDone = result.done;
+      for (const row of result.rows) {
+        const normalized = this.normalizeRow(row);
+        const key = this.getRowKey(normalized);
+        if (!this.seen.has(key)) {
+          this.seen.add(key);
+          output.push(normalized);
+          if (output.length >= batchSize) break;
+        }
+      }
+      if (output.length >= batchSize) break;
+      if (this.rightDone) break;
+    }
+
+    updatePreview(this.labels, this.id, output);
+    const done = this.leftDone && this.rightDone;
+    return { rows: output, done };
+  }
+
+  getRowKey(row) {
+    if (!row) return '';
+    if (!this.columns) {
+      const raw = Object.keys(row).filter((col) => !col.includes('.'));
+      this.columns = raw.length > 0 ? raw : Object.keys(row);
+    }
+    const parts = this.columns.map((col) => [col, row[col]]);
+    return JSON.stringify(parts);
+  }
+
+  normalizeRow(row) {
+    if (!row) return row;
+    const rawColumns = Object.keys(row).filter((col) => !col.includes('.'));
+    if (rawColumns.length === 0) return row;
+    const normalized = {};
+    rawColumns.forEach((col) => {
+      normalized[col] = row[col];
+    });
+    return normalized;
+  }
+
+  getScanInfos() {
+    return [...(this.left.getScanInfos ? this.left.getScanInfos() : []), ...(this.right.getScanInfos ? this.right.getScanInfos() : [])];
+  }
+}
+
 class CrossOp {
   constructor(node, left, right, labels) {
     this.id = node.id;
     this.left = left;
     this.right = right;
     this.labels = labels;
+    this.opType = 'cross';
     this.rightLoaded = false;
     this.rightRows = [];
     this.leftBatch = [];
@@ -462,7 +554,11 @@ function updatePreview(labels, id, rows) {
 function updateScanProgress(id, table, index, done = false) {
   if (index === undefined || index === null) return;
   const prev = scanProgress[id] || {};
-  scanProgress[id] = { table, index, done: done || prev.done };
+  let nextDone = done || prev.done;
+  if (prev.index !== undefined && index < prev.index) {
+    nextDone = done;
+  }
+  scanProgress[id] = { table, index, done: nextDone };
 }
 
 function evaluatePredicate(node, row) {

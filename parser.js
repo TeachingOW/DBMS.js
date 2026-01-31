@@ -143,6 +143,16 @@ function parseRA(input) {
       return { type: 'join', predicate: parseCondition(args), left, right };
     }
 
+    if (lower === 'union') {
+      expect('(');
+      const left = parseExpr();
+      skipWhitespace();
+      expect(',');
+      const right = parseExpr();
+      expect(')');
+      return { type: 'union', left, right };
+    }
+
     if (lower === 'cross' || lower === 'product') {
       expect('(');
       const left = parseExpr();

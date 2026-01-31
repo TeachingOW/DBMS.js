@@ -38,15 +38,7 @@
 
       <section class="panel">
         <h2>Query</h2>
-        <div class="hint" style="margin-bottom: 0.5em;">
-          <!--
-          <strong>Examples:</strong><br>
-          <span>RA: <code>project[id,name](select[age >= 30](users))</code></span><br>
-          <span>Join: <code>project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))</code></span><br>
-          <span>Cross + Select: <code>project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))</code></span><br>
-          <span>SQL (optional): <code>SELECT id, name FROM users WHERE age >= 30 LIMIT 10</code></span>
-        -->
-        </div>
+        <div class="hint" style="margin-bottom: 0.5em;"></div>
         <label class="example-select">
           Example
           <select id="exampleSelect">
@@ -54,6 +46,7 @@
             <option value="project[id,name](select[age >= 30](users))">RA: Selection + Projection</option>
             <option value="project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))">Join: Users + Orders</option>
             <option value="project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))">Cross + Select</option>
+            <option value="union(users, users_alt)">Union: Users + Users Alt</option>
             <option value="SELECT id, name FROM users WHERE age >= 30 LIMIT 10">SQL (optional)</option>
           </select>
         </label>

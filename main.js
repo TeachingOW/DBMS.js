@@ -234,7 +234,14 @@ function renderScanTables() {
     if (!table) {
       container.innerHTML = '<div class="hint">Table not loaded.</div>';
     } else {
-      renderTable(container, table.rows, {
+      const displayRows = table.rows.map((row) => {
+        const normalized = {};
+        table.columns.forEach((col) => {
+          normalized[col] = row[col];
+        });
+        return normalized;
+      });
+      renderTable(container, displayRows, {
         highlightIndex: null,
         highlightClass: `scan-hl-${idx % 4}`
       });
@@ -405,9 +412,11 @@ function syncTablesToWorker() {
 
 function loadSampleData() {
   const usersCsv = `id,name,age,city\n1,Ava,34,Denver\n2,Noah,28,Austin\n3,Mia,41,Denver\n4,Liam,22,Miami`;
+  const usersAltCsv = `id,name,age,city\n5,Olivia,30,Seattle\n6,Ethan,25,Denver\n3,Mia,41,Denver\n7,Lucas,29,Boston`;
   const ordersCsv = `id,user_id,total\n101,1,120.5\n102,2,75\n103,1,60\n104,3,250`;
   tables.clear();
   tables.set('users', parseCsv(usersCsv, 'users'));
+  tables.set('users_alt', parseCsv(usersAltCsv, 'users_alt'));
   tables.set('orders', parseCsv(ordersCsv, 'orders'));
   renderTables();
   syncTablesToWorker();
