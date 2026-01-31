@@ -14,12 +14,23 @@ const activeBatch = document.getElementById('activeBatch');
 const previews = document.getElementById('previews');
 const errorBox = document.getElementById('errorBox');
 const status = document.getElementById('status');
+const resultsSoFar = document.getElementById('resultsSoFar');
+const animateStep = document.getElementById('animateStep');
+const animationStatus = document.getElementById('animationStatus');
+const resultsStatus = document.getElementById('resultsStatus');
 
 let currentPlan = null;
 let runTimer = null;
 let lastPreviews = {};
+let animationTimer = null;
+let accumulatedRows = [];
 
 const tables = new Map();
+const fixedBatchSize = 1;
+
+batchSizeInput.value = String(fixedBatchSize);
+batchSizeInput.disabled = true;
+batchSizeInput.title = 'Batch size fixed to 1';
 
 function setStatus(text) {
   status.textContent = text;
@@ -129,6 +140,50 @@ function renderPreviews(previewMap) {
   });
 }
 
+function setResultsStatus(text) {
+  resultsStatus.textContent = text;
+}
+
+function renderResultsSoFar(rows, options = {}) {
+  if (!rows || rows.length === 0) {
+    resultsSoFar.innerHTML = '<div class="hint">No results yet.</div>';
+    return;
+  }
+  const columns = Object.keys(rows[0]);
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  columns.forEach((col) => {
+    const th = document.createElement('th');
+    th.textContent = col;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  const highlightIndex = options.highlightIndex ?? null;
+  rows.forEach((row, idx) => {
+    const tr = document.createElement('tr');
+    if (idx === highlightIndex) tr.classList.add('row-highlight');
+    columns.forEach((col) => {
+      const td = document.createElement('td');
+      td.textContent = row[col];
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  resultsSoFar.innerHTML = '';
+  resultsSoFar.appendChild(table);
+}
+
+function stopAnimation() {
+  if (animationTimer) {
+    clearInterval(animationTimer);
+    animationTimer = null;
+  }
+}
+
 async function parseFiles(fileList) {
   for (const file of fileList) {
     const text = await file.text();
@@ -231,36 +286,70 @@ loadSample.addEventListener('click', () => {
 buildPlan.addEventListener('click', () => {
   clearError();
   stopRunLoop();
+  stopAnimation();
+  animationStatus.textContent = '';
   const query = queryInput.value.trim();
   if (!query) {
     showError('Please enter a query.');
     return;
   }
+  accumulatedRows = [];
+  renderResultsSoFar([]);
+  setResultsStatus('Input not yet consumed.');
   worker.postMessage({ type: 'build', query });
   setStatus('Building plan…');
 });
 
 resetExec.addEventListener('click', () => {
   stopRunLoop();
+  stopAnimation();
+  animationStatus.textContent = '';
+  animateStep.textContent = 'Animate Step-by-Step';
   worker.postMessage({ type: 'resetExec' });
 });
 
 stepExec.addEventListener('click', () => {
   stopRunLoop();
-  const batchSize = Number(batchSizeInput.value) || 50;
-  worker.postMessage({ type: 'step', batchSize });
+  stopAnimation();
+  animationStatus.textContent = '';
+  animateStep.textContent = 'Animate Step-by-Step';
+  worker.postMessage({ type: 'step', batchSize: fixedBatchSize });
 });
 
 runExec.addEventListener('click', () => {
-  const batchSize = Number(batchSizeInput.value) || 50;
+  const batchSize = fixedBatchSize;
   if (runTimer) {
     stopRunLoop();
     runExec.textContent = 'Run';
     return;
   }
+  stopAnimation();
+  animationStatus.textContent = '';
+  animateStep.textContent = 'Animate Step-by-Step';
   runExec.textContent = 'Pause';
   runTimer = setInterval(() => {
     worker.postMessage({ type: 'step', batchSize });
+  }, 300);
+});
+
+animateStep.addEventListener('click', () => {
+  if (animationTimer) {
+    stopAnimation();
+    animationStatus.textContent = 'Paused';
+    animateStep.textContent = 'Animate Step-by-Step';
+    return;
+  }
+  stopRunLoop();
+  accumulatedRows = [];
+  renderResultsSoFar([]);
+  setResultsStatus('Input not yet consumed.');
+  animationStatus.textContent = 'Running row-by-row...';
+  animateStep.textContent = 'Pause Animation';
+  worker.postMessage({ type: 'resetExec' });
+  setTimeout(() => {
+    animationTimer = setInterval(() => {
+      worker.postMessage({ type: 'step', batchSize: fixedBatchSize });
+    }, 500);
   }, 300);
 });
 
@@ -278,6 +367,9 @@ worker.addEventListener('message', (event) => {
     lastPreviews = {};
     renderPreviews(lastPreviews);
     activeBatch.innerHTML = '<div class="hint">Step to see batches.</div>';
+    accumulatedRows = [];
+    renderResultsSoFar([]);
+    setResultsStatus('Input not yet consumed.');
     setStatus('Plan ready');
   }
   if (message.type === 'reset') {
@@ -285,6 +377,9 @@ worker.addEventListener('message', (event) => {
     renderPreviews(lastPreviews);
     renderPlan(currentPlan, []);
     activeBatch.innerHTML = '<div class="hint">Execution reset.</div>';
+    accumulatedRows = [];
+    renderResultsSoFar([]);
+    setResultsStatus('Input not yet consumed.');
     setStatus('Reset');
     runExec.textContent = 'Run';
     stopRunLoop();
@@ -298,10 +393,24 @@ worker.addEventListener('message', (event) => {
       lastPreviews = message.previews;
       renderPreviews(lastPreviews);
     }
+    if (message.batch && message.batch.length > 0) {
+      accumulatedRows = accumulatedRows.concat(message.batch);
+      renderResultsSoFar(accumulatedRows, { highlightIndex: accumulatedRows.length - 1 });
+    }
+    if (message.done) {
+      setResultsStatus('Input exhausted.');
+    } else if (accumulatedRows.length > 0) {
+      setResultsStatus(`Input available. ${accumulatedRows.length} rows so far.`);
+    }
     setStatus(message.done ? 'Done' : 'Running');
     if (message.done) {
       runExec.textContent = 'Run';
       stopRunLoop();
+      if (animationTimer) {
+        stopAnimation();
+        animationStatus.textContent = 'Done';
+        animateStep.textContent = 'Animate Step-by-Step';
+      }
     }
   }
   if (message.type === 'status') {

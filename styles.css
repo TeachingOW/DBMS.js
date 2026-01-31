@@ -150,6 +150,11 @@ body {
   background: #fff;
 }
 
+.inline input:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .tables {
   display: grid;
   gap: 12px;
@@ -252,6 +257,22 @@ textarea {
   text-align: left;
 }
 
+.table tr.row-highlight td {
+  background: var(--highlight);
+  animation: rowFlash 0.8s ease;
+}
+
+.results-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
 .previews {
   display: grid;
   gap: 12px;
@@ -291,6 +312,15 @@ textarea {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes rowFlash {
+  from {
+    background: #ffe2a8;
+  }
+  to {
+    background: transparent;
   }
 }
 

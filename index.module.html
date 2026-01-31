@@ -50,7 +50,7 @@
           <button id="runExec" class="button">Run</button>
           <label class="inline">
             Batch
-            <input id="batchSize" type="number" min="1" max="500" value="50" />
+            <input id="batchSize" type="number" min="1" max="500" value="1" disabled />
           </label>
         </div>
         <div id="errorBox" class="error hidden"></div>
@@ -61,6 +61,17 @@
         <div id="planTree" class="tree"></div>
       </section>
 
+      <section class="panel">
+        <h2>Results So Far</h2>
+        <div class="results-status">
+          <span id="resultsStatus">Input not yet consumed.</span>
+          <span id="animationStatus"></span>
+        </div>
+        <div id="resultsSoFar" class="table"></div>
+        <div style="margin-top:0.5em;">
+          <button id="animateStep" class="button">Animate Step-by-Step</button>
+        </div>
+      </section>
       <section class="panel results">
         <h2>Execution</h2>
         <div class="split">
@@ -73,15 +84,6 @@
             <div id="previews" class="previews"></div>
           </div>
         </div>
-      </section>
-
-      <section class="panel">
-        <h2>Python Example</h2>
-        <pre><code class="language-python">import pandas as pd
-
-df = pd.read_csv('demo.csv')
-print(df[df['age'] >= 30][['id', 'name']])
-</code></pre>
       </section>
     </main>
 
