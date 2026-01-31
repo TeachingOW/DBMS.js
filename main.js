@@ -18,12 +18,16 @@ const resultsSoFar = document.getElementById('resultsSoFar');
 const animateStep = document.getElementById('animateStep');
 const animationStatus = document.getElementById('animationStatus');
 const resultsStatus = document.getElementById('resultsStatus');
+const scanTables = document.getElementById('scanTables');
 
 let currentPlan = null;
 let runTimer = null;
 let lastPreviews = {};
 let animationTimer = null;
 let accumulatedRows = [];
+let scanNodes = [];
+let scanProgress = {};
+let scanTablesInitialized = false;
 
 const tables = new Map();
 const fixedBatchSize = 1;
@@ -62,6 +66,9 @@ function renderTables() {
     `;
     tablesList.appendChild(card);
   }
+  if (scanNodes.length > 0 && scanTablesInitialized) {
+    renderScanTables();
+  }
 }
 
 function renderPlan(plan, active = []) {
@@ -88,7 +95,7 @@ function renderPlan(plan, active = []) {
   planTree.appendChild(buildNode(plan));
 }
 
-function renderTable(container, rows) {
+function renderTable(container, rows, options = {}) {
   if (!rows || rows.length === 0) {
     container.innerHTML = '<div class="hint">No rows yet.</div>';
     return;
@@ -105,8 +112,14 @@ function renderTable(container, rows) {
   thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  rows.forEach((row) => {
+  const highlightIndex = options.highlightIndex ?? null;
+  const highlightClass = options.highlightClass ?? '';
+  rows.forEach((row, idx) => {
     const tr = document.createElement('tr');
+    if (idx === highlightIndex) {
+      tr.classList.add('row-highlight');
+      if (highlightClass) tr.classList.add(highlightClass);
+    }
     columns.forEach((col) => {
       const td = document.createElement('td');
       td.textContent = row[col];
@@ -137,6 +150,77 @@ function renderPreviews(previewMap) {
     card.appendChild(container);
     renderTable(container, preview.rows);
     previews.appendChild(card);
+  });
+}
+
+function collectScanNodes(plan) {
+  const nodes = [];
+  const walk = (node) => {
+    if (node.op === 'scan') {
+      nodes.push({ id: node.id, table: node.detail });
+    }
+    (node.children || []).forEach(walk);
+  };
+  if (plan) walk(plan);
+  return nodes;
+}
+
+function renderScanTables() {
+  scanTables.innerHTML = '';
+  if (scanNodes.length === 0) {
+    scanTables.innerHTML = '<div class="hint">No scans in plan.</div>';
+    scanTablesInitialized = false;
+    return;
+  }
+  scanNodes.forEach((scan, idx) => {
+    const table = tables.get(scan.table);
+    const card = document.createElement('div');
+    card.className = 'scan-card';
+    card.dataset.scanId = String(scan.id);
+    card.dataset.highlightClass = `scan-hl-${idx % 4}`;
+    const title = document.createElement('h4');
+    title.textContent = `SCAN ${scan.table}`;
+    card.appendChild(title);
+    const container = document.createElement('div');
+    container.className = 'table';
+    card.appendChild(container);
+    if (!table) {
+      container.innerHTML = '<div class="hint">Table not loaded.</div>';
+    } else {
+      renderTable(container, table.rows, {
+        highlightIndex: null,
+        highlightClass: `scan-hl-${idx % 4}`
+      });
+    }
+    scanTables.appendChild(card);
+  });
+  scanTablesInitialized = true;
+  updateScanHighlights();
+}
+
+function updateScanHighlights() {
+  if (!scanTablesInitialized) return;
+  scanNodes.forEach((scan) => {
+    const card = scanTables.querySelector(`[data-scan-id="${scan.id}"]`);
+    if (!card) return;
+    const container = card.querySelector('.table');
+    if (!container) return;
+    const table = container.querySelector('table');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    const highlightClass = card.dataset.highlightClass || '';
+    tbody.querySelectorAll('tr.row-highlight').forEach((row) => {
+      row.classList.remove('row-highlight');
+      if (highlightClass) row.classList.remove(highlightClass);
+    });
+    const progress = scanProgress[scan.id];
+    if (!progress || progress.table !== scan.table) return;
+    const rows = tbody.querySelectorAll('tr');
+    const target = rows[progress.index];
+    if (!target) return;
+    target.classList.add('row-highlight');
+    if (highlightClass) target.classList.add(highlightClass);
   });
 }
 
@@ -296,6 +380,7 @@ buildPlan.addEventListener('click', () => {
   accumulatedRows = [];
   renderResultsSoFar([]);
   setResultsStatus('Input not yet consumed.');
+  scanProgress = {};
   worker.postMessage({ type: 'build', query });
   setStatus('Building plan…');
 });
@@ -305,6 +390,7 @@ resetExec.addEventListener('click', () => {
   stopAnimation();
   animationStatus.textContent = '';
   animateStep.textContent = 'Animate Step-by-Step';
+  scanProgress = {};
   worker.postMessage({ type: 'resetExec' });
 });
 
@@ -343,6 +429,7 @@ animateStep.addEventListener('click', () => {
   accumulatedRows = [];
   renderResultsSoFar([]);
   setResultsStatus('Input not yet consumed.');
+  scanProgress = {};
   animationStatus.textContent = 'Running row-by-row...';
   animateStep.textContent = 'Pause Animation';
   worker.postMessage({ type: 'resetExec' });
@@ -364,6 +451,9 @@ worker.addEventListener('message', (event) => {
     clearError();
     currentPlan = message.plan;
     renderPlan(currentPlan, []);
+    scanNodes = collectScanNodes(currentPlan);
+    scanProgress = {};
+    renderScanTables();
     lastPreviews = {};
     renderPreviews(lastPreviews);
     activeBatch.innerHTML = '<div class="hint">Step to see batches.</div>';
@@ -376,6 +466,8 @@ worker.addEventListener('message', (event) => {
     lastPreviews = {};
     renderPreviews(lastPreviews);
     renderPlan(currentPlan, []);
+    scanProgress = {};
+    updateScanHighlights();
     activeBatch.innerHTML = '<div class="hint">Execution reset.</div>';
     accumulatedRows = [];
     renderResultsSoFar([]);
@@ -392,6 +484,10 @@ worker.addEventListener('message', (event) => {
     if (message.previews) {
       lastPreviews = message.previews;
       renderPreviews(lastPreviews);
+    }
+    if (message.scanProgress) {
+      scanProgress = message.scanProgress;
+      updateScanHighlights();
     }
     if (message.batch && message.batch.length > 0) {
       accumulatedRows = accumulatedRows.concat(message.batch);

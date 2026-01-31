@@ -236,6 +236,11 @@ textarea {
   gap: 16px;
 }
 
+.panel.results {
+  order: 99;
+  grid-column: 1 / -1;
+}
+
 .table {
   overflow: auto;
   max-height: 280px;
@@ -258,8 +263,45 @@ textarea {
 }
 
 .table tr.row-highlight td {
-  background: var(--highlight);
+  background: var(--scan-highlight, var(--highlight));
   animation: rowFlash 0.8s ease;
+}
+
+.scan-hl-0 {
+  --scan-highlight: #ffe2a8;
+}
+
+.scan-hl-1 {
+  --scan-highlight: #cde8ff;
+}
+
+.scan-hl-2 {
+  --scan-highlight: #dff2c9;
+}
+
+.scan-hl-3 {
+  --scan-highlight: #f6c9dd;
+}
+
+.scan-area {
+  margin-top: 16px;
+}
+
+.scan-tables {
+  display: grid;
+  gap: 12px;
+}
+
+.scan-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+}
+
+.scan-card h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
 }
 
 .results-status {
@@ -276,6 +318,7 @@ textarea {
 .previews {
   display: grid;
   gap: 12px;
+  grid-auto-rows: 200px;
 }
 
 .preview-card {
@@ -283,11 +326,19 @@ textarea {
   border-radius: 12px;
   padding: 10px;
   background: #fff;
+  height: 200px;
+  display: flex;
+  flex-direction: column;
 }
 
 .preview-card h4 {
   margin: 0 0 6px;
   font-size: 14px;
+}
+
+.preview-card .table {
+  flex: 1;
+  max-height: none;
 }
 
 .footer {
@@ -317,7 +368,7 @@ textarea {
 
 @keyframes rowFlash {
   from {
-    background: #ffe2a8;
+    background: var(--scan-highlight, #ffe2a8);
   }
   to {
     background: transparent;

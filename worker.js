@@ -6,6 +6,7 @@ let executor = null;
 let previewState = {};
 let labelMap = {};
 let lastAst = null;
+let scanProgress = {};
 
 self.addEventListener('message', (event) => {
   const message = event.data;
@@ -21,6 +22,7 @@ self.addEventListener('message', (event) => {
       labelMap = buildLabelMap(plan);
       executor = buildExecutor(ast, tables, labelMap, previewState);
       previewState = {};
+      scanProgress = {};
       self.postMessage({ type: 'plan', plan });
     } catch (err) {
       self.postMessage({ type: 'plan', error: err.message });
@@ -31,6 +33,7 @@ self.addEventListener('message', (event) => {
       executor = buildExecutor(lastAst, tables, labelMap, previewState);
     }
     previewState = {};
+    scanProgress = {};
     self.postMessage({ type: 'reset' });
   }
   if (message.type === 'step') {
@@ -46,7 +49,8 @@ self.addEventListener('message', (event) => {
       batch: result.rows,
       active: trace,
       previews: previewState,
-      done: result.done
+      done: result.done,
+      scanProgress: { ...scanProgress }
     });
   }
 });
@@ -135,10 +139,28 @@ class ScanOp {
     if (this.index >= this.rows.length) {
       return { rows: [], done: true };
     }
+    const start = this.index;
     const slice = this.rows.slice(this.index, this.index + batchSize);
+    for (let i = 0; i < slice.length; i += 1) {
+      const rowIndex = start + i;
+      if (slice[i] && slice[i].__rowIndex === undefined) {
+        Object.defineProperty(slice[i], '__rowIndex', {
+          value: rowIndex,
+          enumerable: false,
+          configurable: false
+        });
+      }
+    }
     this.index += batchSize;
+    if (slice.length > 0) {
+      updateScanProgress(this.id, this.tableName, Math.min(start + slice.length - 1, this.rows.length - 1));
+    }
     updatePreview(this.labels, this.id, slice);
     return { rows: slice, done: this.index >= this.rows.length };
+  }
+
+  getScanInfos() {
+    return [{ id: this.id, table: this.tableName }];
   }
 }
 
@@ -170,6 +192,10 @@ class SelectOp {
     updatePreview(this.labels, this.id, rows);
     return { rows, done };
   }
+
+  getScanInfos() {
+    return this.child.getScanInfos();
+  }
 }
 
 class ProjectOp {
@@ -188,10 +214,21 @@ class ProjectOp {
       this.columns.forEach((col) => {
         projected[col] = row[col];
       });
+      if (row && row.__rowIndex !== undefined) {
+        Object.defineProperty(projected, '__rowIndex', {
+          value: row.__rowIndex,
+          enumerable: false,
+          configurable: false
+        });
+      }
       return projected;
     });
     updatePreview(this.labels, this.id, rows);
     return { rows, done: result.done };
+  }
+
+  getScanInfos() {
+    return this.child.getScanInfos();
   }
 }
 
@@ -215,6 +252,10 @@ class LimitOp {
     updatePreview(this.labels, this.id, rows);
     return { rows, done };
   }
+
+  getScanInfos() {
+    return this.child.getScanInfos();
+  }
 }
 
 class JoinOp {
@@ -230,6 +271,8 @@ class JoinOp {
     this.leftIndex = 0;
     this.rightIndex = 0;
     this.leftDone = false;
+    this.leftScan = (left.getScanInfos && left.getScanInfos()[0]) || null;
+    this.rightScan = (right.getScanInfos && right.getScanInfos()[0]) || null;
   }
 
   loadRight(batchSize, trace) {
@@ -268,6 +311,12 @@ class JoinOp {
       const leftRow = this.leftBatch[this.leftIndex];
       while (this.rightIndex < this.rightRows.length) {
         const rightRow = this.rightRows[this.rightIndex];
+        if (this.leftScan && leftRow && leftRow.__rowIndex !== undefined) {
+          updateScanProgress(this.leftScan.id, this.leftScan.table, leftRow.__rowIndex);
+        }
+        if (this.rightScan && rightRow && rightRow.__rowIndex !== undefined) {
+          updateScanProgress(this.rightScan.id, this.rightScan.table, rightRow.__rowIndex);
+        }
         this.rightIndex += 1;
         const joined = { ...leftRow, ...rightRow };
         if (evaluatePredicate(this.predicate, joined)) {
@@ -287,6 +336,10 @@ class JoinOp {
     const done = this.leftDone && this.leftIndex >= this.leftBatch.length;
     return { rows: output, done };
   }
+
+  getScanInfos() {
+    return [...(this.left.getScanInfos ? this.left.getScanInfos() : []), ...(this.right.getScanInfos ? this.right.getScanInfos() : [])];
+  }
 }
 
 function updatePreview(labels, id, rows) {
@@ -295,6 +348,11 @@ function updatePreview(labels, id, rows) {
     label: labels[id] || `Node ${id}`,
     rows: rows.slice(0, 5)
   };
+}
+
+function updateScanProgress(id, table, index) {
+  if (index === undefined || index === null) return;
+  scanProgress[id] = { table, index };
 }
 
 function evaluatePredicate(node, row) {
