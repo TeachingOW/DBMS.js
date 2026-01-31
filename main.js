@@ -5,6 +5,7 @@ const loadSample = document.getElementById('loadSample');
 const tablesList = document.getElementById('tablesList');
 const queryInput = document.getElementById('queryInput');
 const buildPlan = document.getElementById('buildPlan');
+const exampleSelect = document.getElementById('exampleSelect');
 const resetExec = document.getElementById('resetExec');
 const stepExec = document.getElementById('stepExec');
 const runExec = document.getElementById('runExec');
@@ -319,6 +320,15 @@ function stopAnimation() {
     clearInterval(animationTimer);
     animationTimer = null;
   }
+}
+
+if (exampleSelect) {
+  exampleSelect.addEventListener('change', () => {
+    const example = exampleSelect.value;
+    if (!example) return;
+    queryInput.value = example;
+    queryInput.focus();
+  });
 }
 
 async function parseFiles(fileList) {

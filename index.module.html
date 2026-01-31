@@ -9,7 +9,9 @@
   <body>
     <header class="topbar">
       <div class="brand">
-        <div class="logo">DB</div>
+        <div class="logo">
+          <img src="seal_ow_2023.jpg" alt="OW logo" />
+        </div>
         <div>
           <h1>Browser DBMS Lab</h1>
           <p>Load CSVs, write Relational Algebra, watch the plan execute.</p>
@@ -37,12 +39,24 @@
       <section class="panel">
         <h2>Query</h2>
         <div class="hint" style="margin-bottom: 0.5em;">
+          <!--
           <strong>Examples:</strong><br>
           <span>RA: <code>project[id,name](select[age >= 30](users))</code></span><br>
           <span>Join: <code>project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))</code></span><br>
           <span>Cross + Select: <code>project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))</code></span><br>
           <span>SQL (optional): <code>SELECT id, name FROM users WHERE age >= 30 LIMIT 10</code></span>
+        -->
         </div>
+        <label class="example-select">
+          Example
+          <select id="exampleSelect">
+            <option value="">Choose an example...</option>
+            <option value="project[id,name](select[age >= 30](users))">RA: Selection + Projection</option>
+            <option value="project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))">Join: Users + Orders</option>
+            <option value="project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))">Cross + Select</option>
+            <option value="SELECT id, name FROM users WHERE age >= 30 LIMIT 10">SQL (optional)</option>
+          </select>
+        </label>
         <textarea id="queryInput" spellcheck="false" placeholder="Enter your query here..."></textarea>
         <div class="controls">
           <button id="buildPlan" class="button">Build plan</button>
@@ -89,7 +103,7 @@
     </main>
 
     <footer class="footer">
-      No backend. Everything stays in your browser.
+      
     </footer>
 
     <script type="module" src="./main.js"></script>
