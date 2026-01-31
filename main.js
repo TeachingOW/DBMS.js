@@ -10,7 +10,6 @@ const stepExec = document.getElementById('stepExec');
 const runExec = document.getElementById('runExec');
 const batchSizeInput = document.getElementById('batchSize');
 const planTree = document.getElementById('planTree');
-const activeBatch = document.getElementById('activeBatch');
 const previews = document.getElementById('previews');
 const errorBox = document.getElementById('errorBox');
 const status = document.getElementById('status');
@@ -97,7 +96,7 @@ function renderPlan(plan, active = []) {
 
 function renderTable(container, rows, options = {}) {
   if (!rows || rows.length === 0) {
-    container.innerHTML = '<div class="hint">No rows yet.</div>';
+    container.innerHTML = '<div class="hint">EOF</div>';
     return;
   }
   const columns = Object.keys(rows[0]);
@@ -133,12 +132,12 @@ function renderTable(container, rows, options = {}) {
 }
 
 function renderSelectPreview(container, preview) {
-  const evaluated = preview.evaluated || [];
-  if (evaluated.length === 0) {
+  const last = preview.last;
+  if (!last || !last.row) {
     container.innerHTML = '<div class="hint">No rows evaluated yet.</div>';
     return;
   }
-  const columns = Object.keys(evaluated[0].row || {});
+  const columns = Object.keys(last.row || {});
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
@@ -153,19 +152,17 @@ function renderSelectPreview(container, preview) {
   thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  evaluated.forEach((entry) => {
-    const tr = document.createElement('tr');
-    tr.classList.add(entry.passed ? 'row-pass' : 'row-discard');
-    const statusTd = document.createElement('td');
-    statusTd.textContent = entry.passed ? 'pass' : 'discard';
-    tr.appendChild(statusTd);
-    columns.forEach((col) => {
-      const td = document.createElement('td');
-      td.textContent = entry.row[col];
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
+  const tr = document.createElement('tr');
+  tr.classList.add(last.passed ? 'row-pass' : 'row-discard');
+  const statusTd = document.createElement('td');
+  statusTd.textContent = last.passed ? 'accept' : 'discard';
+  tr.appendChild(statusTd);
+  columns.forEach((col) => {
+    const td = document.createElement('td');
+    td.textContent = last.row[col];
+    tr.appendChild(td);
   });
+  tbody.appendChild(tr);
   table.appendChild(tbody);
   container.innerHTML = '';
   container.appendChild(table);
@@ -173,7 +170,7 @@ function renderSelectPreview(container, preview) {
 
 function renderPreviews(previewMap) {
   previews.innerHTML = '';
-  const entries = Object.entries(previewMap);
+  const entries = Object.entries(previewMap).filter(([, preview]) => !preview.label.startsWith('SCAN '));
   if (entries.length === 0) {
     previews.innerHTML = '<div class="hint">Run a step to see intermediate results.</div>';
     return;
@@ -184,12 +181,10 @@ function renderPreviews(previewMap) {
     const title = document.createElement('h4');
     title.textContent = `${preview.label}`;
     card.appendChild(title);
-    if (preview.op === 'select') {
+    if (preview.op === 'select' && preview.last) {
       const meta = document.createElement('div');
       meta.className = 'preview-meta';
-      const kept = preview.kept ?? 0;
-      const discarded = preview.discarded ?? 0;
-      meta.textContent = `Kept ${kept} · Discarded ${discarded}`;
+      meta.textContent = preview.last.passed ? 'Accepted tuple' : 'Discarded tuple';
       card.appendChild(meta);
     }
     const container = document.createElement('div');
@@ -243,6 +238,11 @@ function renderScanTables() {
         highlightClass: `scan-hl-${idx % 4}`
       });
     }
+    const footer = document.createElement('div');
+    footer.className = 'scan-end';
+    footer.textContent = 'End of scan';
+    footer.dataset.scanEnd = 'true';
+    card.appendChild(footer);
     scanTables.appendChild(card);
   });
   scanTablesInitialized = true;
@@ -254,6 +254,11 @@ function updateScanHighlights() {
   scanNodes.forEach((scan) => {
     const card = scanTables.querySelector(`[data-scan-id="${scan.id}"]`);
     if (!card) return;
+    const progress = scanProgress[scan.id];
+    const scanEnd = card.querySelector('[data-scan-end="true"]');
+    if (scanEnd) {
+      scanEnd.classList.toggle('active', Boolean(progress && progress.done));
+    }
     const container = card.querySelector('.table');
     if (!container) return;
     const table = container.querySelector('table');
@@ -265,7 +270,6 @@ function updateScanHighlights() {
       row.classList.remove('row-highlight');
       if (highlightClass) row.classList.remove(highlightClass);
     });
-    const progress = scanProgress[scan.id];
     if (!progress || progress.table !== scan.table) return;
     const rows = tbody.querySelectorAll('tr');
     const target = rows[progress.index];
@@ -505,7 +509,6 @@ worker.addEventListener('message', (event) => {
     renderScanTables();
     lastPreviews = {};
     renderPreviews(lastPreviews);
-    activeBatch.innerHTML = '<div class="hint">Step to see batches.</div>';
     accumulatedRows = [];
     renderResultsSoFar([]);
     setResultsStatus('Input not yet consumed.');
@@ -517,7 +520,6 @@ worker.addEventListener('message', (event) => {
     renderPlan(currentPlan, []);
     scanProgress = {};
     updateScanHighlights();
-    activeBatch.innerHTML = '<div class="hint">Execution reset.</div>';
     accumulatedRows = [];
     renderResultsSoFar([]);
     setResultsStatus('Input not yet consumed.');
@@ -527,9 +529,6 @@ worker.addEventListener('message', (event) => {
   }
   if (message.type === 'stepResult') {
     renderPlan(currentPlan, message.active ?? []);
-    if (message.batch) {
-      renderTable(activeBatch, message.batch);
-    }
     if (message.previews) {
       lastPreviews = message.previews;
       renderPreviews(lastPreviews);

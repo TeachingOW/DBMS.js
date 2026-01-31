@@ -143,11 +143,17 @@ class ScanOp {
     this.rows = tableData[node.table]?.rows || [];
     this.index = 0;
     this.labels = labels;
+    this.doneNotified = false;
   }
 
   nextBatch(batchSize, trace) {
     trace.push(this.id);
     if (this.index >= this.rows.length) {
+      if (!this.doneNotified) {
+        const lastIndex = this.rows.length > 0 ? this.rows.length - 1 : -1;
+        updateScanProgress(this.id, this.tableName, lastIndex, true);
+        this.doneNotified = true;
+      }
       return { rows: [], done: true };
     }
     const start = this.index;
@@ -164,7 +170,10 @@ class ScanOp {
     }
     this.index += batchSize;
     if (slice.length > 0) {
-      updateScanProgress(this.id, this.tableName, Math.min(start + slice.length - 1, this.rows.length - 1));
+      const lastIndex = Math.min(start + slice.length - 1, this.rows.length - 1);
+      const done = this.index >= this.rows.length;
+      updateScanProgress(this.id, this.tableName, lastIndex, done);
+      if (done) this.doneNotified = true;
     }
     updatePreview(this.labels, this.id, slice);
     return { rows: slice, done: this.index >= this.rows.length };
@@ -205,10 +214,9 @@ class SelectOp {
     }
     updatePreview(this.labels, this.id, rows);
     if (previewState[this.id]) {
+      const lastEntry = evaluated.length > 0 ? evaluated[evaluated.length - 1] : null;
       previewState[this.id].op = 'select';
-      previewState[this.id].evaluated = evaluated.slice(0, 6);
-      previewState[this.id].kept = rows.length;
-      previewState[this.id].discarded = Math.max(0, evaluated.length - rows.length);
+      previewState[this.id].last = lastEntry;
     }
     return { rows, done };
   }
@@ -451,9 +459,10 @@ function updatePreview(labels, id, rows) {
   };
 }
 
-function updateScanProgress(id, table, index) {
+function updateScanProgress(id, table, index, done = false) {
   if (index === undefined || index === null) return;
-  scanProgress[id] = { table, index };
+  const prev = scanProgress[id] || {};
+  scanProgress[id] = { table, index, done: done || prev.done };
 }
 
 function evaluatePredicate(node, row) {

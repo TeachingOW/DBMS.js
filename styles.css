@@ -304,6 +304,19 @@ textarea {
   font-size: 14px;
 }
 
+.scan-end {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.scan-end.active {
+  color: var(--accent-dark);
+  font-weight: 600;
+  opacity: 1;
+}
+
 .results-status {
   display: flex;
   justify-content: space-between;
@@ -318,7 +331,7 @@ textarea {
 .previews {
   display: grid;
   gap: 12px;
-  grid-auto-rows: 200px;
+  grid-auto-rows: 120px;
 }
 
 .preview-card {
@@ -326,7 +339,7 @@ textarea {
   border-radius: 12px;
   padding: 10px;
   background: #fff;
-  height: 200px;
+  height: 120px;
   display: flex;
   flex-direction: column;
 }
