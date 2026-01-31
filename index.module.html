@@ -40,6 +40,7 @@
           <strong>Examples:</strong><br>
           <span>RA: <code>project[id,name](select[age >= 30](users))</code></span><br>
           <span>Join: <code>project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))</code></span><br>
+          <span>Cross + Select: <code>project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))</code></span><br>
           <span>SQL (optional): <code>SELECT id, name FROM users WHERE age >= 30 LIMIT 10</code></span>
         </div>
         <textarea id="queryInput" spellcheck="false" placeholder="Enter your query here..."></textarea>

@@ -80,6 +80,14 @@ function buildPlan(ast) {
         children: [walk(node.left), walk(node.right)]
       };
     }
+    if (node.type === 'cross') {
+      return {
+        id,
+        op: 'cross',
+        detail: '',
+        children: [walk(node.left), walk(node.right)]
+      };
+    }
     throw new Error(`Unknown node type ${node.type}`);
   }
   return walk(ast);
@@ -116,6 +124,9 @@ function buildExecutor(ast, tableData, labels) {
     }
     if (node.type === 'join') {
       return new JoinOp(node, build(node.left), build(node.right), labels);
+    }
+    if (node.type === 'cross') {
+      return new CrossOp(node, build(node.left), build(node.right), labels);
     }
     throw new Error(`Unknown node type ${node.type}`);
   }
@@ -323,6 +334,87 @@ class JoinOp {
           output.push(joined);
           if (output.length >= batchSize) break;
         }
+      }
+      if (this.rightIndex >= this.rightRows.length) {
+        this.leftIndex += 1;
+        this.rightIndex = 0;
+      }
+      if (this.leftIndex >= this.leftBatch.length && this.leftDone && this.rightIndex === 0) {
+        break;
+      }
+    }
+    updatePreview(this.labels, this.id, output);
+    const done = this.leftDone && this.leftIndex >= this.leftBatch.length;
+    return { rows: output, done };
+  }
+
+  getScanInfos() {
+    return [...(this.left.getScanInfos ? this.left.getScanInfos() : []), ...(this.right.getScanInfos ? this.right.getScanInfos() : [])];
+  }
+}
+
+class CrossOp {
+  constructor(node, left, right, labels) {
+    this.id = node.id;
+    this.left = left;
+    this.right = right;
+    this.labels = labels;
+    this.rightLoaded = false;
+    this.rightRows = [];
+    this.leftBatch = [];
+    this.leftIndex = 0;
+    this.rightIndex = 0;
+    this.leftDone = false;
+    this.leftScan = (left.getScanInfos && left.getScanInfos()[0]) || null;
+    this.rightScan = (right.getScanInfos && right.getScanInfos()[0]) || null;
+  }
+
+  loadRight(batchSize, trace) {
+    if (this.rightLoaded) return;
+    let done = false;
+    while (!done) {
+      const result = this.right.nextBatch(batchSize, trace);
+      this.rightRows.push(...result.rows);
+      done = result.done;
+    }
+    this.rightLoaded = true;
+  }
+
+  nextBatch(batchSize, trace) {
+    trace.push(this.id);
+    this.loadRight(batchSize, trace);
+    const output = [];
+
+    while (output.length < batchSize) {
+      if (this.leftIndex >= this.leftBatch.length) {
+        if (this.leftDone) {
+          updatePreview(this.labels, this.id, output);
+          return { rows: output, done: true };
+        }
+        const result = this.left.nextBatch(batchSize, trace);
+        this.leftBatch = result.rows;
+        this.leftIndex = 0;
+        this.rightIndex = 0;
+        this.leftDone = result.done;
+        if (this.leftBatch.length === 0 && this.leftDone) {
+          updatePreview(this.labels, this.id, output);
+          return { rows: output, done: true };
+        }
+      }
+
+      const leftRow = this.leftBatch[this.leftIndex];
+      while (this.rightIndex < this.rightRows.length) {
+        const rightRow = this.rightRows[this.rightIndex];
+        if (this.leftScan && leftRow && leftRow.__rowIndex !== undefined) {
+          updateScanProgress(this.leftScan.id, this.leftScan.table, leftRow.__rowIndex);
+        }
+        if (this.rightScan && rightRow && rightRow.__rowIndex !== undefined) {
+          updateScanProgress(this.rightScan.id, this.rightScan.table, rightRow.__rowIndex);
+        }
+        this.rightIndex += 1;
+        const joined = { ...leftRow, ...rightRow };
+        output.push(joined);
+        if (output.length >= batchSize) break;
       }
       if (this.rightIndex >= this.rightRows.length) {
         this.leftIndex += 1;
