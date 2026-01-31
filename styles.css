@@ -336,6 +336,20 @@ textarea {
   font-size: 14px;
 }
 
+.preview-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.row-pass td {
+  background: #e8f5d4;
+}
+
+.row-discard td {
+  background: #fde2dc;
+}
+
 .preview-card .table {
   flex: 1;
   max-height: none;

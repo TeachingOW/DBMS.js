@@ -186,12 +186,15 @@ class SelectOp {
   nextBatch(batchSize, trace) {
     trace.push(this.id);
     const rows = [];
+    const evaluated = [];
     let done = false;
     while (rows.length < batchSize && !done) {
       const result = this.child.nextBatch(batchSize, trace);
       done = result.done;
       for (const row of result.rows) {
-        if (evaluatePredicate(this.predicate, row)) {
+        const passed = evaluatePredicate(this.predicate, row);
+        evaluated.push({ row, passed });
+        if (passed) {
           rows.push(row);
           if (rows.length >= batchSize) break;
         }
@@ -201,6 +204,12 @@ class SelectOp {
       }
     }
     updatePreview(this.labels, this.id, rows);
+    if (previewState[this.id]) {
+      previewState[this.id].op = 'select';
+      previewState[this.id].evaluated = evaluated.slice(0, 6);
+      previewState[this.id].kept = rows.length;
+      previewState[this.id].discarded = Math.max(0, evaluated.length - rows.length);
+    }
     return { rows, done };
   }
 

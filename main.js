@@ -132,6 +132,45 @@ function renderTable(container, rows, options = {}) {
   container.appendChild(table);
 }
 
+function renderSelectPreview(container, preview) {
+  const evaluated = preview.evaluated || [];
+  if (evaluated.length === 0) {
+    container.innerHTML = '<div class="hint">No rows evaluated yet.</div>';
+    return;
+  }
+  const columns = Object.keys(evaluated[0].row || {});
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  const statusTh = document.createElement('th');
+  statusTh.textContent = 'Status';
+  headRow.appendChild(statusTh);
+  columns.forEach((col) => {
+    const th = document.createElement('th');
+    th.textContent = col;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  evaluated.forEach((entry) => {
+    const tr = document.createElement('tr');
+    tr.classList.add(entry.passed ? 'row-pass' : 'row-discard');
+    const statusTd = document.createElement('td');
+    statusTd.textContent = entry.passed ? 'pass' : 'discard';
+    tr.appendChild(statusTd);
+    columns.forEach((col) => {
+      const td = document.createElement('td');
+      td.textContent = entry.row[col];
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.innerHTML = '';
+  container.appendChild(table);
+}
+
 function renderPreviews(previewMap) {
   previews.innerHTML = '';
   const entries = Object.entries(previewMap);
@@ -145,10 +184,22 @@ function renderPreviews(previewMap) {
     const title = document.createElement('h4');
     title.textContent = `${preview.label}`;
     card.appendChild(title);
+    if (preview.op === 'select') {
+      const meta = document.createElement('div');
+      meta.className = 'preview-meta';
+      const kept = preview.kept ?? 0;
+      const discarded = preview.discarded ?? 0;
+      meta.textContent = `Kept ${kept} · Discarded ${discarded}`;
+      card.appendChild(meta);
+    }
     const container = document.createElement('div');
     container.className = 'table';
     card.appendChild(container);
-    renderTable(container, preview.rows);
+    if (preview.op === 'select') {
+      renderSelectPreview(container, preview);
+    } else {
+      renderTable(container, preview.rows);
+    }
     previews.appendChild(card);
   });
 }
@@ -228,7 +279,7 @@ function setResultsStatus(text) {
   resultsStatus.textContent = text;
 }
 
-function renderResultsSoFar(rows, options = {}) {
+function renderResultsSoFar(rows) {
   if (!rows || rows.length === 0) {
     resultsSoFar.innerHTML = '<div class="hint">No results yet.</div>';
     return;
@@ -245,10 +296,8 @@ function renderResultsSoFar(rows, options = {}) {
   thead.appendChild(headRow);
   table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const highlightIndex = options.highlightIndex ?? null;
-  rows.forEach((row, idx) => {
+  rows.forEach((row) => {
     const tr = document.createElement('tr');
-    if (idx === highlightIndex) tr.classList.add('row-highlight');
     columns.forEach((col) => {
       const td = document.createElement('td');
       td.textContent = row[col];
@@ -491,7 +540,7 @@ worker.addEventListener('message', (event) => {
     }
     if (message.batch && message.batch.length > 0) {
       accumulatedRows = accumulatedRows.concat(message.batch);
-      renderResultsSoFar(accumulatedRows, { highlightIndex: accumulatedRows.length - 1 });
+      renderResultsSoFar(accumulatedRows);
     }
     if (message.done) {
       setResultsStatus('Input exhausted.');
