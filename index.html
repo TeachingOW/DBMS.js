@@ -3,13 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Browser DBMS Lab</title>
+    <title>Browser DBMS Lab (Module Version)</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <div class="logo">DB</div>
+        <div class="logo">
+          <img src="seal_ow_2023.jpg" alt="OW logo" />
+        </div>
         <div>
           <h1>Browser DBMS Lab</h1>
           <p>Load CSVs, write Relational Algebra, watch the plan execute.</p>
@@ -36,12 +38,18 @@
 
       <section class="panel">
         <h2>Query</h2>
-        <div class="hint" style="margin-bottom: 0.5em;">
-          <strong>Examples:</strong><br>
-          <span>RA: <code>project[id,name](select[age >= 30](users))</code></span><br>
-          <span>Join: <code>project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))</code></span><br>
-          <span>SQL (optional): <code>SELECT id, name FROM users WHERE age >= 30 LIMIT 10</code></span>
-        </div>
+        <div class="hint" style="margin-bottom: 0.5em;"></div>
+        <label class="example-select">
+          Example
+          <select id="exampleSelect">
+            <option value="">Choose an example...</option>
+            <option value="project[id,name](select[age >= 30](users))">RA: Selection + Projection</option>
+            <option value="project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))">Join: Users + Orders</option>
+            <option value="project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))">Cross + Select</option>
+            <option value="union(users, users_alt)">Union: Users + Users Alt</option>
+            <option value="SELECT id, name FROM users WHERE age >= 30 LIMIT 10">SQL (optional)</option>
+          </select>
+        </label>
         <textarea id="queryInput" spellcheck="false" placeholder="Enter your query here..."></textarea>
         <div class="controls">
           <button id="buildPlan" class="button">Build plan</button>
@@ -50,7 +58,7 @@
           <button id="runExec" class="button">Run</button>
           <label class="inline">
             Batch
-            <input id="batchSize" type="number" min="1" max="500" value="50" />
+            <input id="batchSize" type="number" min="1" max="500" value="1" disabled />
           </label>
         </div>
         <div id="errorBox" class="error hidden"></div>
@@ -61,13 +69,24 @@
         <div id="planTree" class="tree"></div>
       </section>
 
+      <section class="panel">
+        <h2>Results So Far</h2>
+        <div class="results-status">
+          <span id="resultsStatus">Input not yet consumed.</span>
+          <span id="animationStatus"></span>
+        </div>
+        <div id="resultsSoFar" class="table"></div>
+        <div style="margin-top:0.5em;">
+          <button id="animateStep" class="button">Animate Step-by-Step</button>
+        </div>
+      </section>
       <section class="panel results">
         <h2>Execution</h2>
+        <div class="scan-area">
+          <h3>Table scans</h3>
+          <div id="scanTables" class="scan-tables"></div>
+        </div>
         <div class="split">
-          <div>
-            <h3>Active batch</h3>
-            <div id="activeBatch" class="table"></div>
-          </div>
           <div>
             <h3>Intermediate previews</h3>
             <div id="previews" class="previews"></div>
@@ -77,41 +96,9 @@
     </main>
 
     <footer class="footer">
-      No backend. Everything stays in your browser.
+      
     </footer>
 
-    <script>
-// --- parser.js ---
-const greekMap = { 'σ': 'select', 'π': 'project', 'τ': 'limit' };
-function isWhitespace(char) { return /\s/.test(char); }
-function isIdentStart(char) { return /[A-Za-z_]/.test(char); }
-function isIdentPart(char) { return /[A-Za-z0-9_\.]/.test(char); }
-function parseQuery(input) {
-  const trimmed = input.trim();
-  if (!trimmed) throw new Error('Empty query.');
-  if (/^select\s+/i.test(trimmed)) {
-    const ast = parseSQLToRA(trimmed);
-    if (!ast) throw new Error('Could not parse SQL. Expected SELECT ... FROM ...');
-    return ast;
-  }
-  return parseRA(trimmed);
-}
-// ...existing code from parser.js (functions: parseRA, parseSQLToRA, tokenizeCondition, parseCondition)...
-// (Omitted here for brevity, will be included in the actual patch)
-
-// --- worker.js as a string for Blob ---
-const workerScript = `
-// parser.js code
-${parseQuery.toString()}
-// ...existing code from parser.js (functions: parseRA, parseSQLToRA, tokenizeCondition, parseCondition)...
-${/* All worker.js code, replacing import with inlined parser.js code */''}
-// ...existing code from worker.js...
-`;
-
-// --- main.js ---
-const worker = new Worker(URL.createObjectURL(new Blob([workerScript], { type: 'application/javascript' })));
-// ...existing code from main.js, replacing import and Worker instantiation...
-// (Omitted here for brevity, will be included in the actual patch)
-    </script>
+    <script type="module" src="./main.js"></script>
   </body>
 </html>
