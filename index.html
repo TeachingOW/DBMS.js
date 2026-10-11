@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Browser DBMS Lab (Module Version)</title>
+    <title>Browser DBMS Lab</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -17,12 +17,13 @@
           <p>Load CSVs, write Relational Algebra, watch the plan execute.</p>
         </div>
       </div>
-      <div class="status" id="status">Idle</div>
+      <div class="status" id="status" role="status" aria-live="polite">Idle</div>
     </header>
 
     <main class="layout">
-      <section class="panel">
-        <h2>Tables</h2>
+      <section class="panel data-panel" aria-labelledby="tablesHeading">
+        <h2 id="tablesHeading">1. Data tables</h2>
+        <p class="panel-intro">Load a CSV or start with the built-in example dataset.</p>
         <div class="uploader">
           <label class="button">
             Upload CSVs
@@ -32,15 +33,15 @@
         </div>
         <div id="tablesList" class="tables"></div>
         <div class="hint">
-          Each CSV becomes a table. Headers become column names. Qualified names like <code>users.age</code> work in joins.
+          Each CSV becomes a table; its first row supplies the column names. Use names like <code>users.age</code> in joins.
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Query</h2>
-        <div class="hint" style="margin-bottom: 0.5em;"></div>
+      <section class="panel query-panel" aria-labelledby="queryHeading">
+        <h2 id="queryHeading">2. Write a query</h2>
+        <p class="panel-intro">Enter relational algebra or a supported SELECT statement, then build its execution plan.</p>
         <label class="example-select">
-          Example
+          Start from an example
           <select id="exampleSelect">
             <option value="">Choose an example...</option>
             <option value="project[id,name](select[age >= 30](users))">RA: Selection + Projection</option>
@@ -50,27 +51,30 @@
             <option value="SELECT id, name FROM users WHERE age >= 30 LIMIT 10">SQL (optional)</option>
           </select>
         </label>
-        <textarea id="queryInput" spellcheck="false" placeholder="Enter your query here..."></textarea>
+        <label class="example-select" for="queryInput">Query expression</label>
+        <textarea id="queryInput" spellcheck="false" aria-describedby="queryHelp" placeholder="For example: select[age >= 30](users)"></textarea>
+        <p class="hint" id="queryHelp">Choose an example or write your own expression.</p>
         <div class="controls">
           <button id="buildPlan" class="button">Build plan</button>
           <button id="resetExec" class="button ghost">Reset</button>
           <button id="stepExec" class="button">Step</button>
           <button id="runExec" class="button">Run</button>
           <label class="inline">
-            Batch
+            Rows per step
             <input id="batchSize" type="number" min="1" max="500" value="1" disabled />
           </label>
         </div>
-        <div id="errorBox" class="error hidden"></div>
+        <div id="errorBox" class="error hidden" role="alert"></div>
       </section>
 
-      <section class="panel plan">
-        <h2>Query plan</h2>
+      <section class="panel plan-panel" aria-labelledby="planHeading">
+        <h2 id="planHeading">3. Query plan</h2>
+        <p class="panel-intro">The tree shows the operators and the order in which they execute.</p>
         <div id="planTree" class="tree"></div>
       </section>
 
-      <section class="panel">
-        <h2>Results So Far</h2>
+      <section class="panel results-panel" aria-labelledby="resultsHeading">
+        <h2 id="resultsHeading">4. Query results</h2>
         <div class="results-status">
           <span id="resultsStatus">Input not yet consumed.</span>
           <span id="animationStatus"></span>
@@ -80,8 +84,9 @@
           <button id="animateStep" class="button">Animate Step-by-Step</button>
         </div>
       </section>
-      <section class="panel results">
-        <h2>Execution</h2>
+      <section class="panel execution-panel" aria-labelledby="executionHeading">
+        <h2 id="executionHeading">Execution details</h2>
+        <p class="panel-intro">Follow scanned rows and inspect the latest intermediate output from each operator.</p>
         <div class="scan-area">
           <h3>Table scans</h3>
           <div id="scanTables" class="scan-tables"></div>
@@ -94,10 +99,6 @@
         </div>
       </section>
     </main>
-
-    <footer class="footer">
-      
-    </footer>
 
     <script type="module" src="./main.js"></script>
   </body>
