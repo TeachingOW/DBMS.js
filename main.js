@@ -86,9 +86,12 @@ function renderPlan(plan, active = []) {
     label.textContent = `${node.op.toUpperCase()} ${node.detail ?? ''}`.trim();
     wrapper.appendChild(label);
     if (node.children && node.children.length) {
+      const children = document.createElement('div');
+      children.className = 'tree-children';
       node.children.forEach((child) => {
-        wrapper.appendChild(buildNode(child));
+        children.appendChild(buildNode(child));
       });
+      wrapper.appendChild(children);
     }
     return wrapper;
   };

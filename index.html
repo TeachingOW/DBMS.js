@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Browser DBMS Lab (Module Version)</title>
+    <title>Browser-Based JavaScript DBMS</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -13,7 +13,7 @@
           <img src="seal_ow_2023.jpg" alt="OW logo" />
         </div>
         <div>
-          <h1>Browser DBMS Lab</h1>
+          <h1>Browser-Based JavaScript DBMS</h1>
           <p>Load CSVs, write Relational Algebra, watch the plan execute.</p>
         </div>
       </div>
@@ -47,6 +47,8 @@
             <option value="project[users.id,users.name,orders.total](join[users.id = orders.user_id](users, orders))">Join: Users + Orders</option>
             <option value="project[users.name,orders.total](select[users.id = orders.user_id](cross(users, orders)))">Cross + Select</option>
             <option value="union(users, users_alt)">Union: Users + Users Alt</option>
+            <option value="SELECT users.id, users.name FROM users WHERE EXISTS (SELECT orders.id FROM orders WHERE orders.user_id = users.id)">Correlated nested query: users with orders</option>
+            <option value="SELECT users.id, users.name FROM users WHERE NOT EXISTS (SELECT orders.id FROM orders WHERE orders.user_id = users.id)">Correlated nested query: users without orders</option>
             <option value="SELECT id, name FROM users WHERE age >= 30 LIMIT 10">SQL (optional)</option>
           </select>
         </label>

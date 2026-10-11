@@ -232,22 +232,81 @@ textarea {
 .tree {
   display: grid;
   gap: 10px;
+  overflow-x: auto;
 }
 
 .tree-node {
-  border-left: 3px solid var(--border);
-  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  padding: 0;
 }
 
 .tree-node.active {
-  border-color: var(--accent);
-  background: var(--highlight);
-  border-radius: 8px;
-  padding: 6px 12px;
+  background: transparent;
 }
 
 .tree-node .label {
   font-weight: 600;
+  position: relative;
+  z-index: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  white-space: nowrap;
+}
+
+.tree-node.active > .label {
+  border-color: var(--accent);
+  background: var(--highlight);
+}
+
+.tree-children {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  gap: 16px;
+  padding-top: 24px;
+}
+
+.tree-children::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  height: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.tree-children > .tree-node::before {
+  content: "";
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  height: 24px;
+  border-left: 1px solid var(--border);
+}
+
+.tree-children > .tree-node:not(:only-child)::after {
+  content: "";
+  position: absolute;
+  top: -12px;
+  left: 0;
+  width: 100%;
+  border-top: 1px solid var(--border);
+  z-index: 0;
+}
+
+.tree-children > .tree-node:first-child::after {
+  left: 50%;
+  width: 50%;
+}
+
+.tree-children > .tree-node:last-child::after {
+  width: 50%;
 }
 
 .results .split {

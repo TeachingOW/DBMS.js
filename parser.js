@@ -186,6 +186,31 @@ function parseRA(input) {
 
 function parseSQLToRA(sql) {
   const cleaned = sql.trim().replace(/;$/, '');
+  const correlatedMatch = cleaned.match(
+    /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_.]+)\s+where\s+(not\s+)?exists\s*\(\s*select\s+.+?\s+from\s+([a-zA-Z0-9_.]+)\s+where\s+(.+?)\s*\)(?:\s+limit\s+(\d+))?$/i
+  );
+  if (correlatedMatch) {
+    const [, colsRaw, outerTable, notExists, innerTable, predicateRaw, limitRaw] = correlatedMatch;
+    let node = {
+      type: 'correlatedExists',
+      input: { type: 'scan', table: outerTable },
+      subquery: { type: 'scan', table: innerTable },
+      predicate: parseCondition(predicateRaw),
+      negated: Boolean(notExists)
+    };
+    const cols = colsRaw.trim();
+    if (cols !== '*') {
+      node = {
+        type: 'project',
+        columns: cols.split(',').map((col) => col.trim()),
+        input: node
+      };
+    }
+    if (limitRaw) {
+      node = { type: 'limit', count: Number(limitRaw), input: node };
+    }
+    return node;
+  }
   const match = cleaned.match(
     /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_.]+)(?:\s+join\s+([a-zA-Z0-9_.]+)\s+on\s+(.+?))?(?:\s+where\s+(.+?))?(?:\s+limit\s+(\d+))?$/i
   );

@@ -66,6 +66,14 @@ function buildPlan(ast) {
     if (node.type === 'select') {
       return { id, op: 'select', detail: conditionToString(node.predicate), children: [walk(node.input)] };
     }
+    if (node.type === 'correlatedExists') {
+      return {
+        id,
+        op: node.negated ? 'not exists' : 'exists',
+        detail: conditionToString(node.predicate),
+        children: [walk(node.input), walk(node.subquery)]
+      };
+    }
     if (node.type === 'project') {
       return { id, op: 'project', detail: node.columns.join(', '), children: [walk(node.input)] };
     }
@@ -123,6 +131,9 @@ function buildExecutor(ast, tableData, labels) {
     }
     if (node.type === 'select') {
       return new SelectOp(node, build(node.input), labels);
+    }
+    if (node.type === 'correlatedExists') {
+      return new CorrelatedExistsOp(node, build(node.input), tableData, labels);
     }
     if (node.type === 'project') {
       return new ProjectOp(node, build(node.input), labels);
@@ -229,6 +240,53 @@ class SelectOp {
 
   getScanInfos() {
     return this.child.getScanInfos();
+  }
+}
+
+class CorrelatedExistsOp {
+  constructor(node, child, tableData, labels) {
+    this.id = node.id;
+    this.child = child;
+    this.subquery = node.subquery;
+    this.predicate = node.predicate;
+    this.negated = node.negated;
+    this.tableData = tableData;
+    this.labels = labels;
+    this.opType = 'correlatedExists';
+    this.done = false;
+  }
+
+  nextBatch(batchSize, trace) {
+    trace.push(this.id);
+    const rows = [];
+    while (!this.done && rows.length < batchSize) {
+      const result = this.child.nextBatch(1, trace);
+      if (result.rows.length === 0) {
+        this.done = result.done;
+        break;
+      }
+
+      const outerRow = result.rows[0];
+      const subquery = buildExecutor(this.subquery, this.tableData, this.labels);
+      let exists = false;
+      let subqueryDone = false;
+      while (!exists && !subqueryDone) {
+        const innerResult = subquery.nextBatch(batchSize, trace);
+        subqueryDone = innerResult.done;
+        exists = innerResult.rows.some((innerRow) =>
+          evaluatePredicate(this.predicate, { ...innerRow, ...outerRow })
+        );
+      }
+
+      if (exists !== this.negated) rows.push(outerRow);
+      if (result.done) this.done = true;
+    }
+    updatePreview(this.labels, this.id, rows);
+    return { rows, done: this.done };
+  }
+
+  getScanInfos() {
+    return this.child.getScanInfos ? this.child.getScanInfos() : [];
   }
 }
 
