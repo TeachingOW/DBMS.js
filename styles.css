@@ -229,10 +229,30 @@ textarea {
   display: none;
 }
 
-.tree {
-  display: grid;
+.panel.plan {
+  grid-column: 1 / -1;
+  min-height: 320px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
-  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+.tree {
+  display: flex;
+  align-items: flex-start;
+  min-height: 220px;
+  overflow: auto;
+  padding: 16px 8px 24px;
+}
+
+/* margin:auto centres the tree when it fits and still lets it scroll when it is wider than the panel */
+.tree > .tree-node {
+  margin: 0 auto;
 }
 
 .tree-node {
@@ -241,6 +261,7 @@ textarea {
   align-items: center;
   position: relative;
   padding: 0;
+  min-width: max-content;
 }
 
 .tree-node.active {
@@ -248,11 +269,15 @@ textarea {
 }
 
 .tree-node .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   position: relative;
   z-index: 1;
   padding: 8px 12px;
   border: 1px solid var(--border);
+  border-left: 4px solid var(--plan-color, var(--accent));
   border-radius: 8px;
   background: #fff;
   white-space: nowrap;
@@ -261,7 +286,67 @@ textarea {
 .tree-node.active > .label {
   border-color: var(--accent);
   background: var(--highlight);
+  box-shadow: 0 0 0 3px rgba(31, 143, 75, 0.25);
+  animation: nodePulse 0.6s ease;
 }
+
+/* the active node sends a token up its edge to its parent */
+.tree-children > .tree-node.active::before {
+  border-left: 2px solid var(--accent);
+}
+
+.tree-children > .tree-node.active::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--accent);
+  z-index: 2;
+  animation: tokenUp 0.6s ease-out forwards;
+}
+
+.node-live,
+.scan-slot {
+  margin-top: 8px;
+  max-width: 100%;
+}
+
+.node-live {
+  min-height: 0;
+  font-size: 12px;
+}
+
+.node-live.has-data .table,
+.scan-slot .table {
+  max-height: 190px;
+  border-radius: 8px;
+}
+
+.node-live .table table,
+.scan-slot .table table {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.scan-slot {
+  border-left: 4px solid var(--plan-color, var(--accent));
+  padding-left: 6px;
+}
+
+.tree-node .plan-symbol {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--plan-color, var(--accent));
+}
+
+.tree-node[data-color-index="0"] .label { --plan-color: #f7b267; }
+.tree-node[data-color-index="1"] .label { --plan-color: #7ec8ff; }
+.tree-node[data-color-index="2"] .label { --plan-color: #95d5b2; }
+.tree-node[data-color-index="3"] .label { --plan-color: #f7a6c1; }
 
 .tree-children {
   display: flex;
@@ -364,10 +449,16 @@ textarea {
 
 .scan-card {
   border: 1px solid var(--border);
+  border-left: 4px solid var(--scan-color, var(--accent));
   border-radius: 12px;
   padding: 10px;
   background: #fff;
 }
+
+.scan-card[data-color-index="0"] { --scan-color: #f7b267; }
+.scan-card[data-color-index="1"] { --scan-color: #7ec8ff; }
+.scan-card[data-color-index="2"] { --scan-color: #95d5b2; }
+.scan-card[data-color-index="3"] { --scan-color: #f7a6c1; }
 
 .scan-card h4 {
   margin: 0 0 6px;
@@ -465,10 +556,10 @@ textarea {
 
 @keyframes rowFlash {
   from {
-    background: var(--scan-highlight, #ffe2a8);
+    background: #ffd166;
   }
   to {
-    background: transparent;
+    background: var(--scan-highlight, #ffe2a8);
   }
 }
 
@@ -477,3 +568,34 @@ textarea {
 .preview-card {
   animation: rise 0.4s ease;
 }
+
+.event-area { margin-bottom: 1rem; }
+.event-now { padding: 0.6rem 0.8rem; border-radius: 8px; border-left: 4px solid #f7b267; background: rgba(247, 178, 103, 0.12); font-weight: 600; }
+.event-log { margin: 0.5rem 0 0; padding-left: 2.2rem; max-height: 14rem; overflow-y: auto; font-size: 0.85rem; opacity: 0.85; }
+.event-log li { margin-bottom: 0.2rem; }
+
+.event-now { margin-bottom: 12px; }
+
+@keyframes nodePulse {
+  0% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+@keyframes tokenUp {
+  0% { top: 14px; opacity: 1; }
+  100% { top: -30px; opacity: 0; }
+}
+
+.plan-sticky {
+  position: sticky;
+  top: 96px;
+  z-index: 5;
+  padding: 8px 0 4px;
+  margin-bottom: 8px;
+  background: var(--panel);
+}
+
+.plan-sticky .toolbar { margin-bottom: 8px; }
+.plan-sticky .event-now { margin-bottom: 0; }
+
+.panel:has(#resultsSoFar) { grid-column: 1 / -1; }

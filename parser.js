@@ -21,10 +21,10 @@ export function parseQuery(input) {
   if (!trimmed) {
     throw new Error('Empty query.');
   }
-  if (/^select\s+/i.test(trimmed)) {
+  if (/^select\s+(?!\[)/i.test(trimmed)) {
     const ast = parseSQLToRA(trimmed);
     if (!ast) {
-      throw new Error('Could not parse SQL. Expected SELECT ... FROM ...');
+      throw new Error('Could not parse SQL. Supported: SELECT cols FROM t [alias] [JOIN t2 [alias] ON ...] [WHERE ...] [LIMIT n], or WHERE [NOT] EXISTS (SELECT ... FROM t WHERE ...).');
     }
     return ast;
   }
@@ -125,8 +125,8 @@ function parseRA(input) {
       }
       if (lower === 'limit') {
         const count = Number(args.trim());
-        if (!Number.isFinite(count)) {
-          throw new Error('Limit expects a number.');
+        if (!Number.isInteger(count) || count < 0) {
+          throw new Error('Limit expects a non-negative integer.');
         }
         return { type: 'limit', count, input: inputNode };
       }
@@ -184,21 +184,34 @@ function parseRA(input) {
   return ast;
 }
 
+function rewriteQualifiedNames(expression, mapping) {
+  if (!expression) return expression;
+  const tableNames = Object.keys(mapping).filter((key) => key && key.length > 0);
+  if (tableNames.length === 0) return expression;
+  const pattern = new RegExp(`\\b(${tableNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\.`, 'g');
+  return expression.replace(pattern, (match, tableName) => `${mapping[tableName] || tableName}.`);
+}
+
 function parseSQLToRA(sql) {
   const cleaned = sql.trim().replace(/;$/, '');
   const correlatedMatch = cleaned.match(
-    /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_.]+)\s+where\s+(not\s+)?exists\s*\(\s*select\s+.+?\s+from\s+([a-zA-Z0-9_.]+)\s+where\s+(.+?)\s*\)(?:\s+limit\s+(\d+))?$/i
+    /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_.]+)(?:\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*))?\s+where\s+(not\s+)?exists\s*\(\s*select\s+.+?\s+from\s+([a-zA-Z0-9_.]+)(?:\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*))?\s+where\s+(.+?)\s*\)(?:\s+limit\s+(\d+))?$/i
   );
   if (correlatedMatch) {
-    const [, colsRaw, outerTable, notExists, innerTable, predicateRaw, limitRaw] = correlatedMatch;
+    const [, colsRaw, outerTable, outerAlias, notExists, innerTable, innerAlias, predicateRaw, limitRaw] = correlatedMatch;
+    const aliasMap = {};
+    if (outerAlias) aliasMap[outerTable] = outerAlias;
+    if (innerAlias) aliasMap[innerTable] = innerAlias;
+    const rewrittenCols = rewriteQualifiedNames(colsRaw.trim(), aliasMap);
+    const rewrittenPredicate = rewriteQualifiedNames(predicateRaw, aliasMap);
     let node = {
       type: 'correlatedExists',
-      input: { type: 'scan', table: outerTable },
-      subquery: { type: 'scan', table: innerTable },
-      predicate: parseCondition(predicateRaw),
+      input: { type: 'scan', table: outerTable, alias: outerAlias || outerTable },
+      subquery: { type: 'scan', table: innerTable, alias: innerAlias || innerTable },
+      predicate: parseCondition(rewrittenPredicate),
       negated: Boolean(notExists)
     };
-    const cols = colsRaw.trim();
+    const cols = rewrittenCols;
     if (cols !== '*') {
       node = {
         type: 'project',
@@ -212,23 +225,28 @@ function parseSQLToRA(sql) {
     return node;
   }
   const match = cleaned.match(
-    /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_.]+)(?:\s+join\s+([a-zA-Z0-9_.]+)\s+on\s+(.+?))?(?:\s+where\s+(.+?))?(?:\s+limit\s+(\d+))?$/i
+    /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_.]+)(?:\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*))?(?:\s+join\s+([a-zA-Z0-9_.]+)(?:\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*))?\s+on\s+(.+?))?(?:\s+where\s+(.+?))?(?:\s+limit\s+(\d+))?$/i
   );
   if (!match) return null;
-  const [, colsRaw, tableA, tableB, joinCond, whereCond, limitRaw] = match;
-  let node = { type: 'scan', table: tableA };
+  const [, colsRaw, tableA, tableAAlias, tableB, tableBAlias, joinCond, whereCond, limitRaw] = match;
+  const leftAlias = tableAAlias || tableA;
+  const rightAlias = tableBAlias || tableB;
+  const aliasMap = {};
+  if (tableAAlias) aliasMap[tableA] = tableAAlias;
+  if (tableBAlias) aliasMap[tableB] = tableBAlias;
+  let node = { type: 'scan', table: tableA, alias: leftAlias };
   if (tableB) {
     node = {
       type: 'join',
-      predicate: parseCondition(joinCond),
-      left: { type: 'scan', table: tableA },
-      right: { type: 'scan', table: tableB }
+      predicate: parseCondition(rewriteQualifiedNames(joinCond, aliasMap)),
+      left: { type: 'scan', table: tableA, alias: leftAlias },
+      right: { type: 'scan', table: tableB, alias: rightAlias }
     };
   }
   if (whereCond) {
-    node = { type: 'select', predicate: parseCondition(whereCond), input: node };
+    node = { type: 'select', predicate: parseCondition(rewriteQualifiedNames(whereCond, aliasMap)), input: node };
   }
-  const cols = colsRaw.trim();
+  const cols = rewriteQualifiedNames(colsRaw.trim(), aliasMap);
   if (cols !== '*') {
     const columns = cols.split(',').map((col) => col.trim());
     node = { type: 'project', columns, input: node };
@@ -274,8 +292,8 @@ function tokenizeCondition(input) {
       continue;
     }
     const twoChar = input.slice(index, index + 2);
-    if (['<=', '>=', '!='].includes(twoChar)) {
-      tokens.push({ type: 'op', value: twoChar });
+    if (['<=', '>=', '!=', '<>'].includes(twoChar)) {
+      tokens.push({ type: 'op', value: twoChar === '<>' ? '!=' : twoChar });
       index += 2;
       continue;
     }

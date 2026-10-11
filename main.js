@@ -9,7 +9,9 @@ const exampleSelect = document.getElementById('exampleSelect');
 const resetExec = document.getElementById('resetExec');
 const stepExec = document.getElementById('stepExec');
 const runExec = document.getElementById('runExec');
-const batchSizeInput = document.getElementById('batchSize');
+const delayInput = document.getElementById('delayInput');
+const eventNow = document.getElementById('eventNow');
+const eventLog = document.getElementById('eventLog');
 const planTree = document.getElementById('planTree');
 const previews = document.getElementById('previews');
 const errorBox = document.getElementById('errorBox');
@@ -18,7 +20,6 @@ const resultsSoFar = document.getElementById('resultsSoFar');
 const animateStep = document.getElementById('animateStep');
 const animationStatus = document.getElementById('animationStatus');
 const resultsStatus = document.getElementById('resultsStatus');
-const scanTables = document.getElementById('scanTables');
 
 let currentPlan = null;
 let runTimer = null;
@@ -28,13 +29,33 @@ let accumulatedRows = [];
 let scanNodes = [];
 let scanProgress = {};
 let scanTablesInitialized = false;
+let builtPlan = null;
+const nodeEls = new Map();
 
 const tables = new Map();
-const fixedBatchSize = 1;
+let stepCount = 0;
 
-batchSizeInput.value = String(fixedBatchSize);
-batchSizeInput.disabled = true;
-batchSizeInput.title = 'Batch size fixed to 1';
+function getDelay() {
+  const value = Number(delayInput.value);
+  return Number.isFinite(value) ? Math.min(3000, Math.max(50, value)) : 400;
+}
+
+function clearEventLog() {
+  stepCount = 0;
+  eventLog.innerHTML = '';
+  eventNow.textContent = 'Press Step to execute the first action.';
+}
+
+function logEvent(note) {
+  if (!note) return;
+  stepCount += 1;
+  eventNow.textContent = `Step ${stepCount}: ${note}`;
+  const item = document.createElement('li');
+  item.value = stepCount;
+  item.textContent = note;
+  eventLog.prepend(item);
+  while (eventLog.children.length > 40) eventLog.lastChild.remove();
+}
 
 function setStatus(text) {
   status.textContent = text;
@@ -59,11 +80,14 @@ function renderTables() {
   for (const [name, table] of tables.entries()) {
     const card = document.createElement('div');
     card.className = 'table-card';
-    card.innerHTML = `
-      <h4>${name}</h4>
-      <div>${table.rows.length} rows · ${table.columns.length} columns</div>
-      <div class="hint">${table.columns.slice(0, 6).join(', ')}${table.columns.length > 6 ? '…' : ''}</div>
-    `;
+    const title = document.createElement('h4');
+    title.textContent = name;
+    const size = document.createElement('div');
+    size.textContent = `${table.rows.length} rows · ${table.columns.length} columns`;
+    const cols = document.createElement('div');
+    cols.className = 'hint';
+    cols.textContent = `${table.columns.slice(0, 6).join(', ')}${table.columns.length > 6 ? '…' : ''}`;
+    card.append(title, size, cols);
     tablesList.appendChild(card);
   }
   if (scanNodes.length > 0 && scanTablesInitialized) {
@@ -71,31 +95,105 @@ function renderTables() {
   }
 }
 
-function renderPlan(plan, active = []) {
+function planNodeText(node) {
+  if (node.displayName) return node.displayName;
+  if (node.op === 'scan') return node.detail || 'scan';
+  if (node.op === 'nestedLoop') return 'nested loop: re-run subquery per outer row';
+  if (node.op === 'dependent join') return `EXISTS ${node.detail ? `(${node.detail})` : ''}`.trim();
+  if (node.op === 'not exists') return `NOT EXISTS ${node.detail ? `(${node.detail})` : ''}`.trim();
+  return node.detail || node.op;
+}
+
+// Builds the plan DOM once per plan; later steps only update classes and live data in place.
+function buildPlanDom(plan) {
   planTree.innerHTML = '';
-  if (!plan) {
-    planTree.innerHTML = '<div class="hint">Build a plan to see the tree.</div>';
-    return;
-  }
-  const activeSet = new Set(active);
+  nodeEls.clear();
+  const palette = ['#f7b267', '#7ec8ff', '#95d5b2', '#f7a6c1'];
   const buildNode = (node) => {
     const wrapper = document.createElement('div');
-    wrapper.className = 'tree-node' + (activeSet.has(node.id) ? ' active' : '');
+    wrapper.className = 'tree-node';
+    wrapper.dataset.colorIndex = String(node.colorIndex ?? 0);
+    wrapper.style.setProperty('--plan-color', palette[(node.colorIndex ?? 0) % palette.length]);
+
     const label = document.createElement('div');
     label.className = 'label';
-    label.textContent = `${node.op.toUpperCase()} ${node.detail ?? ''}`.trim();
+    const symbol = document.createElement('span');
+    symbol.className = 'plan-symbol';
+    symbol.textContent = node.symbol || node.op.toUpperCase();
+    const detail = document.createElement('span');
+    detail.className = 'plan-detail';
+    detail.textContent = planNodeText(node);
+    label.append(symbol, detail);
     wrapper.appendChild(label);
+
+    let live = null;
+    if (node.op === 'scan') {
+      const slot = document.createElement('div');
+      slot.className = 'scan-slot';
+      slot.dataset.scanId = String(node.id);
+      wrapper.appendChild(slot);
+    } else {
+      live = document.createElement('div');
+      live.className = 'node-live';
+      wrapper.appendChild(live);
+    }
+    nodeEls.set(node.id, { wrapper, live });
+
     if (node.children && node.children.length) {
       const children = document.createElement('div');
       children.className = 'tree-children' + (node.children.length > 1 ? ' branched' : '');
-      node.children.forEach((child) => {
-        children.appendChild(buildNode(child));
-      });
+      node.children.forEach((child) => children.appendChild(buildNode(child)));
       wrapper.appendChild(children);
     }
     return wrapper;
   };
   planTree.appendChild(buildNode(plan));
+}
+
+// Shows the latest tuple an operator handled, coloured by accept / discard for tests.
+function renderLive(container, preview) {
+  container.innerHTML = '';
+  if (!preview) {
+    container.classList.remove('has-data');
+    return;
+  }
+  container.classList.add('has-data');
+  const holder = document.createElement('div');
+  holder.className = 'table';
+  container.appendChild(holder);
+  if (preview.op === 'test') {
+    renderSelectPreview(holder, preview);
+  } else {
+    renderTable(holder, preview.rows.slice(-1));
+  }
+}
+
+function renderPlan(plan, active = []) {
+  if (!plan) {
+    builtPlan = null;
+    nodeEls.clear();
+    planTree.innerHTML = '<div class="hint">Build a plan to see the tree.</div>';
+    return;
+  }
+  if (plan !== builtPlan) {
+    buildPlanDom(plan);
+    builtPlan = plan;
+  }
+  const activeSet = new Set(active);
+  nodeEls.forEach(({ wrapper, live }, id) => {
+    wrapper.classList.remove('active');
+    if (activeSet.has(id)) {
+      void wrapper.offsetWidth; // restart the pulse animation on consecutive steps
+      wrapper.classList.add('active');
+    }
+    if (live) renderLive(live, lastPreviews[id]);
+  });
+}
+
+// Row keys are "alias.column"; show the short name unless that would be ambiguous.
+function displayNames(keys) {
+  const bare = keys.map((key) => key.slice(key.lastIndexOf('.') + 1));
+  return keys.map((key, i) => (bare.filter((b) => b === bare[i]).length === 1 ? bare[i] : key));
 }
 
 function renderTable(container, rows, options = {}) {
@@ -104,12 +202,13 @@ function renderTable(container, rows, options = {}) {
     return;
   }
   const columns = Object.keys(rows[0]);
+  const names = displayNames(columns);
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  columns.forEach((col) => {
+  names.forEach((name) => {
     const th = document.createElement('th');
-    th.textContent = col;
+    th.textContent = name;
     headRow.appendChild(th);
   });
   thead.appendChild(headRow);
@@ -148,9 +247,9 @@ function renderSelectPreview(container, preview) {
   const statusTh = document.createElement('th');
   statusTh.textContent = 'Status';
   headRow.appendChild(statusTh);
-  columns.forEach((col) => {
+  displayNames(columns).forEach((name) => {
     const th = document.createElement('th');
-    th.textContent = col;
+    th.textContent = name;
     headRow.appendChild(th);
   });
   thead.appendChild(headRow);
@@ -174,7 +273,7 @@ function renderSelectPreview(container, preview) {
 
 function renderPreviews(previewMap) {
   previews.innerHTML = '';
-  const entries = Object.entries(previewMap).filter(([, preview]) => !preview.label.startsWith('SCAN '));
+  const entries = Object.entries(previewMap).filter(([, preview]) => !/^scan\b/i.test(preview.label));
   if (entries.length === 0) {
     previews.innerHTML = '<div class="hint">Run a step to see intermediate results.</div>';
     return;
@@ -185,7 +284,7 @@ function renderPreviews(previewMap) {
     const title = document.createElement('h4');
     title.textContent = `${preview.label}`;
     card.appendChild(title);
-    if (preview.op === 'select' && preview.last) {
+    if (preview.op === 'test' && preview.last) {
       const meta = document.createElement('div');
       meta.className = 'preview-meta';
       meta.textContent = preview.last.passed ? 'Accepted tuple' : 'Discarded tuple';
@@ -194,7 +293,7 @@ function renderPreviews(previewMap) {
     const container = document.createElement('div');
     container.className = 'table';
     card.appendChild(container);
-    if (preview.op === 'select') {
+    if (preview.op === 'test') {
       renderSelectPreview(container, preview);
     } else {
       renderTable(container, preview.rows);
@@ -207,7 +306,12 @@ function collectScanNodes(plan) {
   const nodes = [];
   const walk = (node) => {
     if (node.op === 'scan') {
-      nodes.push({ id: node.id, table: node.detail });
+      nodes.push({
+        id: node.id,
+        table: node.detail,
+        label: node.displayName || node.detail,
+        colorIndex: node.colorIndex ?? 0
+      });
     }
     (node.children || []).forEach(walk);
   };
@@ -216,24 +320,17 @@ function collectScanNodes(plan) {
 }
 
 function renderScanTables() {
-  scanTables.innerHTML = '';
-  if (scanNodes.length === 0) {
-    scanTables.innerHTML = '<div class="hint">No scans in plan.</div>';
-    scanTablesInitialized = false;
-    return;
-  }
+  scanTablesInitialized = false;
   scanNodes.forEach((scan, idx) => {
+    const slot = planTree.querySelector(`.scan-slot[data-scan-id="${scan.id}"]`);
+    if (!slot) return;
+    slot.innerHTML = '';
     const table = tables.get(scan.table);
-    const card = document.createElement('div');
-    card.className = 'scan-card';
-    card.dataset.scanId = String(scan.id);
-    card.dataset.highlightClass = `scan-hl-${idx % 4}`;
-    const title = document.createElement('h4');
-    title.textContent = `SCAN ${scan.table}`;
-    card.appendChild(title);
+    const colorIndex = (scan.colorIndex ?? idx) % 4;
+    slot.dataset.highlightClass = `scan-hl-${colorIndex}`;
     const container = document.createElement('div');
     container.className = 'table';
-    card.appendChild(container);
+    slot.appendChild(container);
     if (!table) {
       container.innerHTML = '<div class="hint">Table not loaded.</div>';
     } else {
@@ -244,49 +341,40 @@ function renderScanTables() {
         });
         return normalized;
       });
-      renderTable(container, displayRows, {
-        highlightIndex: null,
-        highlightClass: `scan-hl-${idx % 4}`
-      });
+      renderTable(container, displayRows, { highlightIndex: null, highlightClass: `scan-hl-${colorIndex}` });
     }
     const footer = document.createElement('div');
     footer.className = 'scan-end';
     footer.textContent = 'End of scan';
     footer.dataset.scanEnd = 'true';
-    card.appendChild(footer);
-    scanTables.appendChild(card);
+    slot.appendChild(footer);
   });
-  scanTablesInitialized = true;
+  scanTablesInitialized = scanNodes.length > 0;
   updateScanHighlights();
 }
 
 function updateScanHighlights() {
   if (!scanTablesInitialized) return;
   scanNodes.forEach((scan) => {
-    const card = scanTables.querySelector(`[data-scan-id="${scan.id}"]`);
-    if (!card) return;
+    const slot = planTree.querySelector(`.scan-slot[data-scan-id="${scan.id}"]`);
+    if (!slot) return;
     const progress = scanProgress[scan.id];
-    const scanEnd = card.querySelector('[data-scan-end="true"]');
-    if (scanEnd) {
-      scanEnd.classList.toggle('active', Boolean(progress && progress.done));
-    }
-    const container = card.querySelector('.table');
-    if (!container) return;
-    const table = container.querySelector('table');
-    if (!table) return;
-    const tbody = table.querySelector('tbody');
+    const scanEnd = slot.querySelector('[data-scan-end="true"]');
+    if (scanEnd) scanEnd.classList.toggle('active', Boolean(progress && progress.done));
+    const container = slot.querySelector('.table');
+    const tbody = container && container.querySelector('tbody');
     if (!tbody) return;
-    const highlightClass = card.dataset.highlightClass || '';
+    const highlightClass = slot.dataset.highlightClass || '';
     tbody.querySelectorAll('tr.row-highlight').forEach((row) => {
       row.classList.remove('row-highlight');
       if (highlightClass) row.classList.remove(highlightClass);
     });
-    if (!progress || progress.table !== scan.table) return;
-    const rows = tbody.querySelectorAll('tr');
-    const target = rows[progress.index];
+    if (!progress || progress.table !== scan.table || progress.done) return;
+    const target = tbody.querySelectorAll('tr')[progress.index];
     if (!target) return;
     target.classList.add('row-highlight');
     if (highlightClass) target.classList.add(highlightClass);
+    container.scrollTop = Math.max(0, target.offsetTop - container.clientHeight / 2);
   });
 }
 
@@ -299,30 +387,7 @@ function renderResultsSoFar(rows) {
     resultsSoFar.innerHTML = '<div class="hint">No results yet.</div>';
     return;
   }
-  const columns = Object.keys(rows[0]);
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  columns.forEach((col) => {
-    const th = document.createElement('th');
-    th.textContent = col;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-  const tbody = document.createElement('tbody');
-  rows.forEach((row) => {
-    const tr = document.createElement('tr');
-    columns.forEach((col) => {
-      const td = document.createElement('td');
-      td.textContent = row[col];
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  resultsSoFar.innerHTML = '';
-  resultsSoFar.appendChild(table);
+  renderTable(resultsSoFar, rows);
 }
 
 function stopAnimation() {
@@ -354,7 +419,7 @@ async function parseFiles(fileList) {
 
 function parseCsv(text, tableName) {
   const rows = [];
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length === 0) {
     return { name: tableName, columns: [], rows: [] };
   }
@@ -365,7 +430,6 @@ function parseCsv(text, tableName) {
     headers.forEach((header, idx) => {
       const value = values[idx] ?? '';
       row[header] = parseValue(value);
-      row[`${tableName}.${header}`] = parseValue(value);
     });
     rows.push(row);
   }
@@ -456,6 +520,7 @@ buildPlan.addEventListener('click', () => {
   renderResultsSoFar([]);
   setResultsStatus('Input not yet consumed.');
   scanProgress = {};
+  clearEventLog();
   worker.postMessage({ type: 'build', query });
   setStatus('Building plan…');
 });
@@ -466,6 +531,7 @@ resetExec.addEventListener('click', () => {
   animationStatus.textContent = '';
   animateStep.textContent = 'Animate Step-by-Step';
   scanProgress = {};
+  clearEventLog();
   worker.postMessage({ type: 'resetExec' });
 });
 
@@ -474,11 +540,10 @@ stepExec.addEventListener('click', () => {
   stopAnimation();
   animationStatus.textContent = '';
   animateStep.textContent = 'Animate Step-by-Step';
-  worker.postMessage({ type: 'step', batchSize: fixedBatchSize });
+  worker.postMessage({ type: 'step' });
 });
 
 runExec.addEventListener('click', () => {
-  const batchSize = fixedBatchSize;
   if (runTimer) {
     stopRunLoop();
     runExec.textContent = 'Run';
@@ -489,8 +554,8 @@ runExec.addEventListener('click', () => {
   animateStep.textContent = 'Animate Step-by-Step';
   runExec.textContent = 'Pause';
   runTimer = setInterval(() => {
-    worker.postMessage({ type: 'step', batchSize });
-  }, 300);
+    worker.postMessage({ type: 'step' });
+  }, getDelay());
 });
 
 animateStep.addEventListener('click', () => {
@@ -505,13 +570,13 @@ animateStep.addEventListener('click', () => {
   renderResultsSoFar([]);
   setResultsStatus('Input not yet consumed.');
   scanProgress = {};
-  animationStatus.textContent = 'Running row-by-row...';
+  animationStatus.textContent = 'Animating every action...';
   animateStep.textContent = 'Pause Animation';
   worker.postMessage({ type: 'resetExec' });
   setTimeout(() => {
     animationTimer = setInterval(() => {
-      worker.postMessage({ type: 'step', batchSize: fixedBatchSize });
-    }, 500);
+      worker.postMessage({ type: 'step' });
+    }, getDelay());
   }, 300);
 });
 
@@ -525,6 +590,7 @@ worker.addEventListener('message', (event) => {
     }
     clearError();
     currentPlan = message.plan;
+    lastPreviews = {};
     renderPlan(currentPlan, []);
     scanNodes = collectScanNodes(currentPlan);
     scanProgress = {};
@@ -540,6 +606,7 @@ worker.addEventListener('message', (event) => {
     lastPreviews = {};
     renderPreviews(lastPreviews);
     renderPlan(currentPlan, []);
+    clearEventLog();
     scanProgress = {};
     updateScanHighlights();
     accumulatedRows = [];
@@ -550,11 +617,12 @@ worker.addEventListener('message', (event) => {
     stopRunLoop();
   }
   if (message.type === 'stepResult') {
-    renderPlan(currentPlan, message.active ?? []);
+    logEvent(message.note);
     if (message.previews) {
       lastPreviews = message.previews;
       renderPreviews(lastPreviews);
     }
+    renderPlan(currentPlan, message.active ?? []);
     if (message.scanProgress) {
       scanProgress = message.scanProgress;
       updateScanHighlights();
@@ -578,6 +646,15 @@ worker.addEventListener('message', (event) => {
         animateStep.textContent = 'Animate Step-by-Step';
       }
     }
+  }
+  if (message.type === 'error') {
+    stopRunLoop();
+    stopAnimation();
+    runExec.textContent = 'Run';
+    animateStep.textContent = 'Animate Step-by-Step';
+    animationStatus.textContent = '';
+    showError(message.error);
+    setStatus('Error');
   }
   if (message.type === 'status') {
     setStatus(message.text);

@@ -55,19 +55,26 @@
         <textarea id="queryInput" spellcheck="false" placeholder="Enter your query here..."></textarea>
         <div class="controls">
           <button id="buildPlan" class="button">Build plan</button>
-          <button id="resetExec" class="button ghost">Reset</button>
-          <button id="stepExec" class="button">Step</button>
-          <button id="runExec" class="button">Run</button>
-          <label class="inline">
-            Batch
-            <input id="batchSize" type="number" min="1" max="500" value="1" disabled />
-          </label>
         </div>
         <div id="errorBox" class="error hidden"></div>
       </section>
 
       <section class="panel plan">
         <h2>Query plan</h2>
+        <div class="plan-sticky">
+        <div class="toolbar">
+          <button id="resetExec" class="button ghost">Reset</button>
+          <button id="stepExec" class="button">Step</button>
+          <button id="runExec" class="button">Run</button>
+          <button id="animateStep" class="button ghost">Animate Step-by-Step</button>
+          <label class="inline">
+            Delay (ms)
+            <input id="delayInput" type="number" min="50" max="3000" step="50" value="400" />
+          </label>
+          <span id="animationStatus" class="hint"></span>
+        </div>
+        <div id="eventNow" class="event-now">Build a plan, then press Step to execute the first action.</div>
+        </div>
         <div id="planTree" class="tree"></div>
       </section>
 
@@ -75,18 +82,14 @@
         <h2>Results So Far</h2>
         <div class="results-status">
           <span id="resultsStatus">Input not yet consumed.</span>
-          <span id="animationStatus"></span>
         </div>
         <div id="resultsSoFar" class="table"></div>
-        <div style="margin-top:0.5em;">
-          <button id="animateStep" class="button">Animate Step-by-Step</button>
-        </div>
       </section>
       <section class="panel results">
         <h2>Execution</h2>
-        <div class="scan-area">
-          <h3>Table scans</h3>
-          <div id="scanTables" class="scan-tables"></div>
+        <div class="event-area">
+          <h3>Step log</h3>
+          <ol id="eventLog" class="event-log"></ol>
         </div>
         <div class="split">
           <div>
