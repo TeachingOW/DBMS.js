@@ -87,7 +87,7 @@ function renderPlan(plan, active = []) {
     wrapper.appendChild(label);
     if (node.children && node.children.length) {
       const children = document.createElement('div');
-      children.className = 'tree-children';
+      children.className = 'tree-children' + (node.children.length > 1 ? ' branched' : '');
       node.children.forEach((child) => {
         children.appendChild(buildNode(child));
       });

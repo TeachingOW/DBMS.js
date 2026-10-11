@@ -272,10 +272,10 @@ textarea {
   padding-top: 24px;
 }
 
-.tree-children::before {
+.tree-children::after {
   content: "";
   position: absolute;
-  top: 12px;
+  top: 0;
   left: 50%;
   height: 12px;
   border-left: 1px solid var(--border);
@@ -290,23 +290,14 @@ textarea {
   border-left: 1px solid var(--border);
 }
 
-.tree-children > .tree-node:not(:only-child)::after {
+.tree-children.branched::before {
   content: "";
   position: absolute;
-  top: -12px;
+  top: 12px;
   left: 0;
   width: 100%;
   border-top: 1px solid var(--border);
   z-index: 0;
-}
-
-.tree-children > .tree-node:first-child::after {
-  left: 50%;
-  width: 50%;
-}
-
-.tree-children > .tree-node:last-child::after {
-  width: 50%;
 }
 
 .results .split {
