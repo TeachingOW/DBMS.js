@@ -11,50 +11,35 @@ const stepExec = document.getElementById('stepExec');
 const runExec = document.getElementById('runExec');
 const delayInput = document.getElementById('delayInput');
 const eventNow = document.getElementById('eventNow');
-const eventLog = document.getElementById('eventLog');
 const planTree = document.getElementById('planTree');
-const previews = document.getElementById('previews');
 const errorBox = document.getElementById('errorBox');
 const status = document.getElementById('status');
-const resultsSoFar = document.getElementById('resultsSoFar');
-const animateStep = document.getElementById('animateStep');
-const animationStatus = document.getElementById('animationStatus');
-const resultsStatus = document.getElementById('resultsStatus');
+const backExec = document.getElementById('backExec');
 
 let currentPlan = null;
 let runTimer = null;
 let lastPreviews = {};
-let animationTimer = null;
 let accumulatedRows = [];
 let scanNodes = [];
 let scanProgress = {};
 let scanTablesInitialized = false;
 let builtPlan = null;
 const nodeEls = new Map();
+const edgeEls = new Map();
+const SVG_NS = 'http://www.w3.org/2000/svg';
+let treeInner = null;
+let treeEdges = null;
 
 const tables = new Map();
-let stepCount = 0;
-
 function getDelay() {
   const value = Number(delayInput.value);
   return Number.isFinite(value) ? Math.min(3000, Math.max(50, value)) : 400;
 }
 
-function clearEventLog() {
-  stepCount = 0;
-  eventLog.innerHTML = '';
-  eventNow.textContent = 'Press Step to execute the first action.';
-}
+const IDLE_TEXT = 'Press Step to execute the first action.';
 
-function logEvent(note) {
-  if (!note) return;
-  stepCount += 1;
-  eventNow.textContent = `Step ${stepCount}: ${note}`;
-  const item = document.createElement('li');
-  item.value = stepCount;
-  item.textContent = note;
-  eventLog.prepend(item);
-  while (eventLog.children.length > 40) eventLog.lastChild.remove();
+function setStepText(text) {
+  eventNow.textContent = text;
 }
 
 function setStatus(text) {
@@ -95,10 +80,22 @@ function renderTables() {
   }
 }
 
+const OP_NAMES = {
+  select: 'selection',
+  project: 'projection',
+  join: 'join',
+  cross: 'cross product',
+  union: 'union',
+  limit: 'limit',
+  'dependent join': 'semi-join',
+  'not exists': 'anti-join',
+  nestedLoop: 'nested loop'
+};
+
 function planNodeText(node) {
   if (node.displayName) return node.displayName;
   if (node.op === 'scan') return node.detail || 'scan';
-  if (node.op === 'nestedLoop') return 'nested loop: re-run subquery per outer row';
+  if (node.op === 'nestedLoop') return 'for each outer row';
   if (node.op === 'dependent join') return `EXISTS ${node.detail ? `(${node.detail})` : ''}`.trim();
   if (node.op === 'not exists') return `NOT EXISTS ${node.detail ? `(${node.detail})` : ''}`.trim();
   return node.detail || node.op;
@@ -108,8 +105,9 @@ function planNodeText(node) {
 function buildPlanDom(plan) {
   planTree.innerHTML = '';
   nodeEls.clear();
-  const palette = ['#f7b267', '#7ec8ff', '#95d5b2', '#f7a6c1'];
-  const buildNode = (node) => {
+  edgeEls.clear();
+  const palette = ['#f7b267', '#7ec8ff', '#95d5b2', '#f7a6c1', '#c3a6ff', '#ffd966'];
+  const buildNode = (node, parent = null) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'tree-node';
     wrapper.dataset.colorIndex = String(node.colorIndex ?? 0);
@@ -118,13 +116,31 @@ function buildPlanDom(plan) {
     const label = document.createElement('div');
     label.className = 'label';
     const symbol = document.createElement('span');
-    symbol.className = 'plan-symbol';
+    symbol.className = node.op === 'scan' ? 'plan-symbol scan-word' : node.op === 'result' ? 'plan-symbol result-word' : 'plan-symbol operator';
     symbol.textContent = node.symbol || node.op.toUpperCase();
+    symbol.title = OP_NAMES[node.op] || node.op;
     const detail = document.createElement('span');
     detail.className = 'plan-detail';
-    detail.textContent = planNodeText(node);
-    label.append(symbol, detail);
-    wrapper.appendChild(label);
+    detail.textContent = node.op === 'result' ? 'rows so far' : planNodeText(node);
+    if (node.op === 'scan') {
+      const badge = document.createElement('span');
+      badge.className = 'scan-badge';
+      badge.textContent = `S${(node.colorIndex ?? 0) + 1}`;
+      label.append(badge);
+    }
+    label.append(symbol);
+    if (OP_NAMES[node.op]) {
+      const name = document.createElement('span');
+      name.className = 'plan-opname';
+      name.textContent = OP_NAMES[node.op];
+      label.append(name);
+    }
+    label.append(detail);
+    // Row layout: [label | tuples beside it].
+    const row = document.createElement('div');
+    row.className = 'node-row';
+    row.append(label);
+    wrapper.appendChild(row);
 
     let live = null;
     if (node.op === 'scan') {
@@ -134,30 +150,99 @@ function buildPlanDom(plan) {
       wrapper.appendChild(slot);
     } else {
       live = document.createElement('div');
-      live.className = 'node-live';
-      wrapper.appendChild(live);
+      live.className = node.op === 'result' ? 'node-live result-live' : 'node-live';
+      row.appendChild(live);
     }
-    nodeEls.set(node.id, { wrapper, live });
+    nodeEls.set(node.id, { wrapper, live, node, parent, label, parentId: parent ? parent.id : null });
 
     if (node.children && node.children.length) {
       const children = document.createElement('div');
       children.className = 'tree-children' + (node.children.length > 1 ? ' branched' : '');
-      node.children.forEach((child) => children.appendChild(buildNode(child)));
+      node.children.forEach((child) => children.appendChild(buildNode(child, node)));
       wrapper.appendChild(children);
     }
     return wrapper;
   };
-  planTree.appendChild(buildNode(plan));
+  // The query result is the top of the tree: rows leaving the root land here.
+  const resultNode = { id: 0, op: 'result', symbol: 'RESULT', detail: '', children: [plan] };
+  treeInner = document.createElement('div');
+  treeInner.className = 'tree-inner';
+  treeEdges = document.createElementNS(SVG_NS, 'svg');
+  treeEdges.setAttribute('class', 'tree-edges');
+  treeInner.append(treeEdges, buildNode(resultNode));
+  planTree.appendChild(treeInner);
+  nodeEls.forEach(({ live, node, parent }) => {
+    if (live) reserveLiveSize(live, node, parent);
+  });
+  drawEdges();
+}
+
+const TEST_OPS = new Set(['select', 'join', 'cross', 'dependent join', 'not exists', 'nestedLoop']);
+
+// Qualified column names of the rows a plan node produces (mirrors what the worker emits).
+function planColumns(node, parent = null) {
+  const child = (i) => planColumns(node.children[i], node);
+  switch (node.op) {
+    case 'scan': {
+      const table = tables.get(node.table);
+      return table ? table.columns.map((col) => `${node.alias || node.table}.${col}`) : [];
+    }
+    case 'project': {
+      const written = node.detail.split(',').map((col) => col.trim());
+      return written.length === 1 && written[0] === '*' ? child(0) : written;
+    }
+    case 'join':
+    case 'cross':
+      return [...child(0), ...child(1)];
+    case 'nestedLoop': {
+      const outer = parent && parent.children[0] ? planColumns(parent.children[0], parent) : [];
+      return [...outer, ...child(0)];
+    }
+    case 'dependent join':
+    case 'not exists':
+    case 'result':
+    case 'select':
+    case 'limit':
+    case 'union':
+      return child(0);
+    default:
+      return [];
+  }
+}
+
+// Gives each live area a fixed size taken from its column headers, so showing different
+// tuples never changes the layout of the plan.
+function reserveLiveSize(live, node, parent) {
+  const headers = displayNames(planColumns(node, parent));
+  if (TEST_OPS.has(node.op)) headers.unshift('Status');
+  const holder = document.createElement('div');
+  holder.className = 'table';
+  holder.style.visibility = 'hidden';
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  const row = document.createElement('tr');
+  (headers.length ? headers : ['']).forEach((name) => {
+    const th = document.createElement('th');
+    th.textContent = name;
+    head.appendChild(th);
+    const td = document.createElement('td');
+    td.textContent = '\u00a0';
+    row.appendChild(td);
+  });
+  table.append(head, row);
+  holder.appendChild(table);
+  live.appendChild(holder);
+  const width = holder.offsetWidth;
+  const height = holder.offsetHeight;
+  live.removeChild(holder);
+  live.style.width = `${Math.max(150, Math.ceil(width * 1.2) + 12)}px`;
+  live.style.height = node.op === 'result' ? '176px' : `${height + 2}px`;
 }
 
 // Shows the latest tuple an operator handled, coloured by accept / discard for tests.
 function renderLive(container, preview) {
   container.innerHTML = '';
-  if (!preview) {
-    container.classList.remove('has-data');
-    return;
-  }
-  container.classList.add('has-data');
+  if (!preview) return;
   const holder = document.createElement('div');
   holder.className = 'table';
   container.appendChild(holder);
@@ -167,6 +252,62 @@ function renderLive(container, preview) {
     renderTable(holder, preview.rows.slice(-1));
   }
 }
+
+function offsetWithin(el, root) {
+  let x = 0;
+  let y = 0;
+  for (let e = el; e && e !== root; e = e.offsetParent) {
+    x += e.offsetLeft;
+    y += e.offsetTop;
+  }
+  return { x, y };
+}
+
+// Draws an elbow connector from the top of each child to the bottom of its parent,
+// with an arrowhead showing that tuples flow upwards.
+function drawEdges() {
+  if (!treeInner || !treeEdges) return;
+  treeEdges.innerHTML = '<defs><marker id="edge-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 1 L10 5 L0 9 z" fill="context-stroke"/></marker></defs>';
+  edgeEls.clear();
+  nodeEls.forEach((entry, id) => {
+    if (entry.parentId === null) return;
+    const parent = nodeEls.get(entry.parentId);
+    if (!parent) return;
+    const from = offsetWithin(entry.label, treeInner);
+    const to = offsetWithin(parent.label, treeInner);
+    const x2 = from.x + entry.label.offsetWidth / 2;
+    const y2 = from.y;
+    const x1 = to.x + parent.label.offsetWidth / 2;
+    const y1 = to.y + parent.label.offsetHeight;
+    const mid = y1 + (y2 - y1) / 2 + 4;
+    const dx = x1 - x2;
+    const r = Math.min(10, Math.abs(dx) / 2, (y2 - y1) / 4);
+    const dir = dx > 0 ? 1 : -1;
+    const d = Math.abs(dx) < 1
+      ? `M ${x2} ${y2} V ${y1}`
+      : `M ${x2} ${y2} V ${mid + r} Q ${x2} ${mid} ${x2 + dir * r} ${mid} H ${x1 - dir * r} Q ${x1} ${mid} ${x1} ${mid - r} V ${y1}`;
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('class', 'tree-edge');
+    path.setAttribute('d', d);
+    path.setAttribute('marker-end', 'url(#edge-arrow)');
+    treeEdges.appendChild(path);
+    edgeEls.set(id, path);
+  });
+  edgeEls.forEach((path, id) => path.classList.toggle('active', activeEdges.has(id)));
+}
+
+let activeEdges = new Set();
+let edgeFrame = null;
+function scheduleEdges() {
+  if (edgeFrame) return;
+  edgeFrame = requestAnimationFrame(() => {
+    edgeFrame = null;
+    drawEdges();
+  });
+}
+new ResizeObserver(scheduleEdges).observe(planTree);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleEdges);
+window.addEventListener('resize', scheduleEdges);
 
 function renderPlan(plan, active = []) {
   if (!plan) {
@@ -180,13 +321,15 @@ function renderPlan(plan, active = []) {
     builtPlan = plan;
   }
   const activeSet = new Set(active);
+  activeEdges = activeSet;
+  edgeEls.forEach((path, id) => path.classList.toggle('active', activeSet.has(id)));
   nodeEls.forEach(({ wrapper, live }, id) => {
     wrapper.classList.remove('active');
     if (activeSet.has(id)) {
       void wrapper.offsetWidth; // restart the pulse animation on consecutive steps
       wrapper.classList.add('active');
     }
-    if (live) renderLive(live, lastPreviews[id]);
+    if (live && id !== 0) renderLive(live, lastPreviews[id]);
   });
 }
 
@@ -271,37 +414,6 @@ function renderSelectPreview(container, preview) {
   container.appendChild(table);
 }
 
-function renderPreviews(previewMap) {
-  previews.innerHTML = '';
-  const entries = Object.entries(previewMap).filter(([, preview]) => !/^scan\b/i.test(preview.label));
-  if (entries.length === 0) {
-    previews.innerHTML = '<div class="hint">Run a step to see intermediate results.</div>';
-    return;
-  }
-  entries.forEach(([id, preview]) => {
-    const card = document.createElement('div');
-    card.className = 'preview-card';
-    const title = document.createElement('h4');
-    title.textContent = `${preview.label}`;
-    card.appendChild(title);
-    if (preview.op === 'test' && preview.last) {
-      const meta = document.createElement('div');
-      meta.className = 'preview-meta';
-      meta.textContent = preview.last.passed ? 'Accepted tuple' : 'Discarded tuple';
-      card.appendChild(meta);
-    }
-    const container = document.createElement('div');
-    container.className = 'table';
-    card.appendChild(container);
-    if (preview.op === 'test') {
-      renderSelectPreview(container, preview);
-    } else {
-      renderTable(container, preview.rows);
-    }
-    previews.appendChild(card);
-  });
-}
-
 function collectScanNodes(plan) {
   const nodes = [];
   const walk = (node) => {
@@ -319,6 +431,19 @@ function collectScanNodes(plan) {
   return nodes;
 }
 
+// Leading column that shows a coloured pointer on the row this scan is currently reading.
+function addMarkerColumn(container) {
+  const table = container.querySelector('table');
+  if (!table) return;
+  table.querySelector('thead tr').prepend(document.createElement('th'));
+  table.querySelectorAll('tbody tr').forEach((tr) => {
+    const td = document.createElement('td');
+    td.className = 'scan-marker';
+    td.textContent = '▶';
+    tr.prepend(td);
+  });
+}
+
 function renderScanTables() {
   scanTablesInitialized = false;
   scanNodes.forEach((scan, idx) => {
@@ -326,7 +451,7 @@ function renderScanTables() {
     if (!slot) return;
     slot.innerHTML = '';
     const table = tables.get(scan.table);
-    const colorIndex = (scan.colorIndex ?? idx) % 4;
+    const colorIndex = (scan.colorIndex ?? idx) % 6;
     slot.dataset.highlightClass = `scan-hl-${colorIndex}`;
     const container = document.createElement('div');
     container.className = 'table';
@@ -342,6 +467,7 @@ function renderScanTables() {
         return normalized;
       });
       renderTable(container, displayRows, { highlightIndex: null, highlightClass: `scan-hl-${colorIndex}` });
+      addMarkerColumn(container);
     }
     const footer = document.createElement('div');
     footer.className = 'scan-end';
@@ -351,6 +477,7 @@ function renderScanTables() {
   });
   scanTablesInitialized = scanNodes.length > 0;
   updateScanHighlights();
+  drawEdges();
 }
 
 function updateScanHighlights() {
@@ -369,32 +496,30 @@ function updateScanHighlights() {
       row.classList.remove('row-highlight');
       if (highlightClass) row.classList.remove(highlightClass);
     });
+    tbody.querySelectorAll('.scan-marker.on').forEach((td) => td.classList.remove('on'));
     if (!progress || progress.table !== scan.table || progress.done) return;
     const target = tbody.querySelectorAll('tr')[progress.index];
     if (!target) return;
     target.classList.add('row-highlight');
     if (highlightClass) target.classList.add(highlightClass);
+    const marker = target.querySelector('.scan-marker');
+    if (marker) marker.classList.add('on');
     container.scrollTop = Math.max(0, target.offsetTop - container.clientHeight / 2);
   });
 }
 
-function setResultsStatus(text) {
-  resultsStatus.textContent = text;
-}
-
+// Rows that have left the root operator, shown in the Result node at the top of the plan.
 function renderResultsSoFar(rows) {
-  if (!rows || rows.length === 0) {
-    resultsSoFar.innerHTML = '<div class="hint">No results yet.</div>';
-    return;
-  }
-  renderTable(resultsSoFar, rows);
-}
-
-function stopAnimation() {
-  if (animationTimer) {
-    clearInterval(animationTimer);
-    animationTimer = null;
-  }
+  const entry = nodeEls.get(0);
+  if (!entry || !entry.live) return;
+  const live = entry.live;
+  live.innerHTML = '';
+  if (!rows || rows.length === 0) return;
+  const holder = document.createElement('div');
+  holder.className = 'table';
+  live.appendChild(holder);
+  renderTable(holder, rows);
+  holder.scrollTop = holder.scrollHeight;
 }
 
 if (exampleSelect) {
@@ -495,6 +620,7 @@ function stopRunLoop() {
     clearInterval(runTimer);
     runTimer = null;
   }
+  runExec.textContent = 'Run';
 }
 
 fileInput.addEventListener('change', (event) => {
@@ -509,76 +635,53 @@ loadSample.addEventListener('click', () => {
 buildPlan.addEventListener('click', () => {
   clearError();
   stopRunLoop();
-  stopAnimation();
-  animationStatus.textContent = '';
   const query = queryInput.value.trim();
   if (!query) {
     showError('Please enter a query.');
     return;
   }
   accumulatedRows = [];
-  renderResultsSoFar([]);
-  setResultsStatus('Input not yet consumed.');
   scanProgress = {};
-  clearEventLog();
   worker.postMessage({ type: 'build', query });
   setStatus('Building plan…');
 });
 
 resetExec.addEventListener('click', () => {
   stopRunLoop();
-  stopAnimation();
-  animationStatus.textContent = '';
-  animateStep.textContent = 'Animate Step-by-Step';
-  scanProgress = {};
-  clearEventLog();
   worker.postMessage({ type: 'resetExec' });
+});
+
+backExec.addEventListener('click', () => {
+  stopRunLoop();
+  worker.postMessage({ type: 'back' });
 });
 
 stepExec.addEventListener('click', () => {
   stopRunLoop();
-  stopAnimation();
-  animationStatus.textContent = '';
-  animateStep.textContent = 'Animate Step-by-Step';
   worker.postMessage({ type: 'step' });
 });
 
 runExec.addEventListener('click', () => {
   if (runTimer) {
     stopRunLoop();
-    runExec.textContent = 'Run';
     return;
   }
-  stopAnimation();
-  animationStatus.textContent = '';
-  animateStep.textContent = 'Animate Step-by-Step';
   runExec.textContent = 'Pause';
   runTimer = setInterval(() => {
     worker.postMessage({ type: 'step' });
   }, getDelay());
 });
 
-animateStep.addEventListener('click', () => {
-  if (animationTimer) {
-    stopAnimation();
-    animationStatus.textContent = 'Paused';
-    animateStep.textContent = 'Animate Step-by-Step';
-    return;
-  }
-  stopRunLoop();
-  accumulatedRows = [];
-  renderResultsSoFar([]);
-  setResultsStatus('Input not yet consumed.');
+// Puts the page back to "nothing executed yet" for the current plan.
+function showInitialState() {
+  lastPreviews = {};
   scanProgress = {};
-  animationStatus.textContent = 'Animating every action...';
-  animateStep.textContent = 'Pause Animation';
-  worker.postMessage({ type: 'resetExec' });
-  setTimeout(() => {
-    animationTimer = setInterval(() => {
-      worker.postMessage({ type: 'step' });
-    }, getDelay());
-  }, 300);
-});
+  accumulatedRows = [];
+  renderPlan(currentPlan, []);
+  updateScanHighlights();
+  renderResultsSoFar([]);
+  setStepText(IDLE_TEXT);
+}
 
 worker.addEventListener('message', (event) => {
   const message = event.data;
@@ -593,66 +696,28 @@ worker.addEventListener('message', (event) => {
     lastPreviews = {};
     renderPlan(currentPlan, []);
     scanNodes = collectScanNodes(currentPlan);
-    scanProgress = {};
     renderScanTables();
-    lastPreviews = {};
-    renderPreviews(lastPreviews);
-    accumulatedRows = [];
-    renderResultsSoFar([]);
-    setResultsStatus('Input not yet consumed.');
+    showInitialState();
     setStatus('Plan ready');
   }
   if (message.type === 'reset') {
-    lastPreviews = {};
-    renderPreviews(lastPreviews);
-    renderPlan(currentPlan, []);
-    clearEventLog();
-    scanProgress = {};
-    updateScanHighlights();
-    accumulatedRows = [];
-    renderResultsSoFar([]);
-    setResultsStatus('Input not yet consumed.');
-    setStatus('Reset');
-    runExec.textContent = 'Run';
+    showInitialState();
+    setStatus(message.back ? 'Plan ready' : 'Reset');
     stopRunLoop();
   }
   if (message.type === 'stepResult') {
-    logEvent(message.note);
-    if (message.previews) {
-      lastPreviews = message.previews;
-      renderPreviews(lastPreviews);
-    }
+    lastPreviews = message.previews || {};
+    scanProgress = message.scanProgress || {};
+    accumulatedRows = message.results || [];
     renderPlan(currentPlan, message.active ?? []);
-    if (message.scanProgress) {
-      scanProgress = message.scanProgress;
-      updateScanHighlights();
-    }
-    if (message.batch && message.batch.length > 0) {
-      accumulatedRows = accumulatedRows.concat(message.batch);
-      renderResultsSoFar(accumulatedRows);
-    }
-    if (message.done) {
-      setResultsStatus('Input exhausted.');
-    } else if (accumulatedRows.length > 0) {
-      setResultsStatus(`Input available. ${accumulatedRows.length} rows so far.`);
-    }
+    updateScanHighlights();
+    renderResultsSoFar(accumulatedRows);
+    setStepText(`Step ${message.stepIndex + 1}: ${message.note}`);
     setStatus(message.done ? 'Done' : 'Running');
-    if (message.done) {
-      runExec.textContent = 'Run';
-      stopRunLoop();
-      if (animationTimer) {
-        stopAnimation();
-        animationStatus.textContent = 'Done';
-        animateStep.textContent = 'Animate Step-by-Step';
-      }
-    }
+    if (message.done) stopRunLoop();
   }
   if (message.type === 'error') {
     stopRunLoop();
-    stopAnimation();
-    runExec.textContent = 'Run';
-    animateStep.textContent = 'Animate Step-by-Step';
-    animationStatus.textContent = '';
     showError(message.error);
     setStatus('Error');
   }

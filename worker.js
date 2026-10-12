@@ -7,6 +7,10 @@ let previewState = {};
 let labelMap = {};
 let lastAst = null;
 let scanProgress = {};
+// Every executed step is recorded so the UI can move backwards and forwards through the run.
+let history = [];
+let cursor = -1;
+let produced = [];
 
 self.addEventListener('message', (event) => {
   const message = event.data;
@@ -19,8 +23,7 @@ self.addEventListener('message', (event) => {
       const ast = parseQuery(message.query);
       const nextPlan = buildPlan(ast);
       const nextLabels = buildLabelMap(nextPlan);
-      previewState = {};
-      scanProgress = {};
+      clearRun();
       executor = buildExecutor(ast, tables, nextLabels);
       lastAst = ast;
       plan = nextPlan;
@@ -34,8 +37,7 @@ self.addEventListener('message', (event) => {
     }
   }
   if (message.type === 'resetExec') {
-    previewState = {};
-    scanProgress = {};
+    clearRun();
     if (plan && lastAst) {
       try {
         executor = buildExecutor(lastAst, tables, labelMap);
@@ -52,22 +54,50 @@ self.addEventListener('message', (event) => {
       self.postMessage({ type: 'status', text: 'Build a plan first' });
       return;
     }
+    // Replaying a step we already executed (after going back) just re-sends the recording.
+    if (cursor + 1 < history.length) {
+      cursor += 1;
+      self.postMessage(history[cursor]);
+      return;
+    }
+    const last = history[history.length - 1];
+    if (last && last.done) {
+      self.postMessage(last);
+      return;
+    }
     try {
       const result = executor.step();
-      self.postMessage({
+      produced = produced.concat(result.rows);
+      history.push({
         type: 'stepResult',
-        batch: result.rows,
+        stepIndex: history.length,
+        results: produced,
         active: [...trace],
         note: lastNote,
-        previews: previewState,
+        previews: { ...previewState },
         done: result.done,
         scanProgress: { ...scanProgress }
       });
+      cursor = history.length - 1;
+      self.postMessage(history[cursor]);
     } catch (err) {
       self.postMessage({ type: 'error', error: err.message });
     }
   }
+  if (message.type === 'back') {
+    if (cursor < 0) return;
+    cursor -= 1;
+    self.postMessage(cursor < 0 ? { type: 'reset', back: true } : history[cursor]);
+  }
 });
+
+function clearRun() {
+  previewState = {};
+  scanProgress = {};
+  history = [];
+  cursor = -1;
+  produced = [];
+}
 
 // Assigns each scan its display name and its own colour index (nth scan in the plan).
 // Aliases come only from the query itself, so what the plan shows is what rows are keyed by.
@@ -98,7 +128,7 @@ function buildPlan(ast) {
       const nestedLoop = {
         id: node.loopId,
         op: 'nestedLoop',
-        symbol: 'loop',
+        symbol: '↻',
         detail: 'for each outer row',
         children: [walk(node.subquery)]
       };

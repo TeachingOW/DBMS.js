@@ -64,40 +64,19 @@
         <div class="plan-sticky">
         <div class="toolbar">
           <button id="resetExec" class="button ghost">Reset</button>
-          <button id="stepExec" class="button">Step</button>
+          <button id="backExec" class="button ghost" title="Undo the last step">◀ Back</button>
+          <button id="stepExec" class="button" title="Execute the next action">Step ▶</button>
           <button id="runExec" class="button">Run</button>
-          <button id="animateStep" class="button ghost">Animate Step-by-Step</button>
           <label class="inline">
             Delay (ms)
             <input id="delayInput" type="number" min="50" max="3000" step="50" value="400" />
           </label>
-          <span id="animationStatus" class="hint"></span>
         </div>
         <div id="eventNow" class="event-now">Build a plan, then press Step to execute the first action.</div>
         </div>
         <div id="planTree" class="tree"></div>
       </section>
 
-      <section class="panel">
-        <h2>Results So Far</h2>
-        <div class="results-status">
-          <span id="resultsStatus">Input not yet consumed.</span>
-        </div>
-        <div id="resultsSoFar" class="table"></div>
-      </section>
-      <section class="panel results">
-        <h2>Execution</h2>
-        <div class="event-area">
-          <h3>Step log</h3>
-          <ol id="eventLog" class="event-log"></ol>
-        </div>
-        <div class="split">
-          <div>
-            <h3>Intermediate previews</h3>
-            <div id="previews" class="previews"></div>
-          </div>
-        </div>
-      </section>
     </main>
 
     <footer class="footer">
